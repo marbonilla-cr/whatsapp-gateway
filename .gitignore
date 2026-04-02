@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+data/*.db
+data/*.db-*
+# Accidental SQLite file when DATABASE_URL was resolved incorrectly (legacy)
+:memory:
