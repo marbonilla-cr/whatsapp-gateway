@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { nanoid } from 'nanoid';
 
 export function validateMetaSignature(
   rawBody: Buffer,
@@ -60,8 +59,18 @@ export function decryptToken(encrypted: string, key: string): string {
   return decipher.update(ciphertext) + decipher.final('utf8');
 }
 
+/** ~12 chars, URL-safe (replaces nanoid(12)). */
+export function randomId12(): string {
+  return crypto.randomBytes(9).toString('base64url');
+}
+
+/** ~16 chars, URL-safe (replaces nanoid(16)). */
+export function randomId16(): string {
+  return crypto.randomBytes(12).toString('base64url');
+}
+
 export function generateApiKey(): string {
-  return `gw_${nanoid(32)}`;
+  return `gw_${crypto.randomBytes(24).toString('base64url')}`;
 }
 
 export function apiKeyPrefixFromFullKey(apiKey: string): string {

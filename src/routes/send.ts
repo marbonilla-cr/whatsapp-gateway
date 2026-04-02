@@ -1,10 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type * as schema from '../db/schema';
 import { messageLogs } from '../db/schema';
-import { decryptToken } from '../services/crypto';
+import { decryptToken, randomId16 } from '../services/crypto';
 import { sendMessage } from '../services/meta';
 import type { MetaMessagePayload } from '../types';
 import { MetaApiError } from '../types';
@@ -145,7 +144,7 @@ export function createSendRouter(
     try {
       db.insert(messageLogs)
         .values({
-          id: nanoid(16),
+          id: randomId16(),
           appId: app.id,
           direction: 'OUT',
           fromNumber: app.phoneNumberId,

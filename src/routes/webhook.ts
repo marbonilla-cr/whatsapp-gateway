@@ -1,11 +1,10 @@
 import { Router, type Request, type Response } from 'express';
 import { eq, and } from 'drizzle-orm';
-import { nanoid } from 'nanoid';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { Logger } from 'pino';
 import type * as schema from '../db/schema';
 import { apps, messageLogs } from '../db/schema';
-import { validateMetaSignature } from '../services/crypto';
+import { randomId16, validateMetaSignature } from '../services/crypto';
 import { forwardToApp } from '../services/router';
 
 function extractPhoneNumberId(payload: unknown): string | undefined {
@@ -142,7 +141,7 @@ export function createWebhookRouter(
         try {
           db.insert(messageLogs)
             .values({
-              id: nanoid(16),
+              id: randomId16(),
               appId: app.id,
               direction: 'IN',
               fromNumber: fromNum,

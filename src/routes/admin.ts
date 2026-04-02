@@ -1,7 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { eq } from 'drizzle-orm';
 import type { InferSelectModel } from 'drizzle-orm';
-import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type * as schema from '../db/schema';
@@ -11,6 +10,7 @@ import {
   generateApiKey,
   hashApiKey,
   apiKeyPrefixFromFullKey,
+  randomId12,
 } from '../services/crypto';
 
 const createAppBody = z.object({
@@ -70,7 +70,7 @@ export function createAdminRouter(
     }
     const db = getDb();
     const now = new Date().toISOString();
-    const id = nanoid(12);
+    const id = randomId12();
     const apiKey = generateApiKey();
     const apiKeyHash = hashApiKey(apiKey);
     const apiKeyPrefix = apiKeyPrefixFromFullKey(apiKey);
