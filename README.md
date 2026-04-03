@@ -20,6 +20,22 @@ curl -s http://localhost:3000/health | jq
 
 Deberías ver `status: "ok"` y `db: "ok"`.
 
+## Panel de administración (`admin/`)
+
+Aplicación React aparte (Vite + Tailwind + TanStack Query + Wouter + shadcn-style UI) para gestionar apps, ver logs y diagnóstico.
+
+```bash
+cd admin
+cp .env.example .env
+# Editá VITE_GATEWAY_URL (URL pública del gateway) y dejá VITE_ADMIN_SECRET vacío (el secreto se ingresa en pantalla).
+npm install
+npm run dev
+```
+
+Abre `http://localhost:5173`, ingresá el **Admin Secret** (mismo que `ADMIN_SECRET` del gateway). El build de producción queda en `admin/dist/`.
+
+El gateway expone **CORS** (origen reflejado + cabeceras `X-Admin-Secret` / `X-Gateway-Key`) para que el panel pueda llamar al API desde el navegador.
+
 ## Registrar una nueva app
 
 Generá un secreto de admin y llamá a `POST /admin/apps`:

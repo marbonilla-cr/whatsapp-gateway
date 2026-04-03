@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import express, { type Request, type Response, type NextFunction } from 'express';
+import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
@@ -75,6 +76,15 @@ export function buildApp() {
   });
 
   const app = express();
+
+  app.use(
+    cors({
+      origin: true,
+      credentials: true,
+      allowedHeaders: ['Content-Type', 'X-Admin-Secret', 'X-Gateway-Key', 'x-hub-signature-256'],
+      methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    })
+  );
 
   app.use(
     pinoHttp({
