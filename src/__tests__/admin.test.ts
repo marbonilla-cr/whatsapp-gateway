@@ -85,3 +85,29 @@ describe('admin apps CRUD', () => {
     expect(row.isActive).toBe(false);
   });
 });
+
+describe('GET /admin/logs', () => {
+  beforeEach(() => {
+    resetDbSingleton();
+    process.env.ADMIN_SECRET = ADMIN;
+    process.env.GATEWAY_ENCRYPTION_KEY = KEY_64_HEX;
+    process.env.META_VERIFY_TOKEN = 'verify-token-test';
+    process.env.DATABASE_URL = ':memory:';
+    process.env.LOG_LEVEL = 'silent';
+    process.env.NODE_ENV = 'test';
+  });
+
+  afterEach(() => {
+    resetDbSingleton();
+  });
+
+  it('requires X-Admin-Secret and returns last message_logs', async () => {
+    const { app } = buildApp();
+    const forbidden = await request(app).get('/admin/logs');
+    expect(forbidden.status).toBe(403);
+
+    const ok = await request(app).get('/admin/logs').set('X-Admin-Secret', ADMIN);
+    expect(ok.status).toBe(200);
+    expect(Array.isArray(ok.body)).toBe(true);
+  });
+});

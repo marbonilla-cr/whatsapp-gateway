@@ -1,10 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { InferSelectModel } from 'drizzle-orm';
 import { z } from 'zod';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type * as schema from '../db/schema';
-import { apps } from '../db/schema';
+import { apps, messageLogs } from '../db/schema';
 import {
   encryptToken,
   generateApiKey,
@@ -56,6 +56,17 @@ export function createAdminRouter(
 ) {
   const r = Router();
   r.use(adminAuth);
+
+  /** Diagnóstico: últimos eventos registrados (no incluye payload crudo de Meta). */
+  r.get('/logs', (_req: Request, res: Response) => {
+    const rows = getDb()
+      .select()
+      .from(messageLogs)
+      .orderBy(desc(messageLogs.createdAt))
+      .limit(50)
+      .all();
+    res.json(rows);
+  });
 
   r.post('/apps', (req: Request, res: Response) => {
     const parsed = createAppBody.safeParse(req.body);
