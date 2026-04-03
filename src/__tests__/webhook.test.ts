@@ -26,7 +26,7 @@ describe('POST /webhook', () => {
     resetDbSingleton();
   });
 
-  it('returns 401 when signature is invalid', async () => {
+  it('returns 200 with diagnostic when signature is invalid (temporary bypass for Meta diagnosis)', async () => {
     const { app } = buildApp();
     const raw = JSON.stringify({ entry: [] });
     const res = await request(app)
@@ -34,8 +34,8 @@ describe('POST /webhook', () => {
       .set('Content-Type', 'application/json')
       .set('x-hub-signature-256', 'sha256=deadbeef')
       .send(raw);
-    expect(res.status).toBe(401);
-    expect(res.body.error?.code).toBe('INVALID_SIGNATURE');
+    expect(res.status).toBe(200);
+    expect(res.body.diagnostic).toBe('accepted_without_verification');
   });
 
   it('returns 200 when signature is valid', async () => {

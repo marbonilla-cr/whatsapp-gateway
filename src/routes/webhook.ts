@@ -82,27 +82,56 @@ export function createWebhookRouter(
   });
 
   r.post('/', (req: Request, res: Response) => {
+    /**
+     * TEMPORAL — diagnóstico: si falla la firma, logueamos detalle y respondemos 200 a Meta
+     * para confirmar entrega; no procesamos ni forwardeamos el body (no confiable).
+     * Revertir a 401 cuando termine el diagnóstico.
+     */
     const signature = req.header('x-hub-signature-256');
     if (!signature) {
-      log.warn('POST /webhook missing x-hub-signature-256');
-      res.status(401).json({
-        error: { code: 'INVALID_SIGNATURE' as const, message: 'Missing signature header' },
-      });
+      log.warn(
+        {
+          diagnostic: 'webhook_signature_bypass',
+          reason: 'missing_x_hub_signature_256',
+          contentType: req.header('content-type'),
+          contentLength: req.header('content-length'),
+          userAgent: req.header('user-agent'),
+        },
+        'POST /webhook: missing signature header — returning 200 for Meta diagnostics (temporary)'
+      );
+      res.status(200).json({ success: true, diagnostic: 'accepted_without_verification' });
       return;
     }
     const raw = (req as Request & { rawBody?: Buffer }).rawBody;
     if (!raw || !Buffer.isBuffer(raw)) {
-      log.warn('POST /webhook missing rawBody');
-      res.status(401).json({
-        error: { code: 'INVALID_SIGNATURE' as const, message: 'Missing raw body' },
-      });
+      log.warn(
+        {
+          diagnostic: 'webhook_signature_bypass',
+          reason: 'missing_raw_body',
+          signaturePrefix: signature.slice(0, 24),
+          contentType: req.header('content-type'),
+        },
+        'POST /webhook: rawBody missing — returning 200 for Meta diagnostics (temporary)'
+      );
+      res.status(200).json({ success: true, diagnostic: 'accepted_without_verification' });
       return;
     }
     if (!validateMetaSignature(raw, signature, hmacSecret)) {
-      log.warn('POST /webhook invalid HMAC signature');
-      res.status(401).json({
-        error: { code: 'INVALID_SIGNATURE' as const, message: 'Invalid signature' },
-      });
+      const sigOkFormat = signature.startsWith('sha256=');
+      const recvLen = signature.startsWith('sha256=') ? signature.length - 7 : 0;
+      log.warn(
+        {
+          diagnostic: 'webhook_signature_bypass',
+          reason: 'invalid_hmac',
+          signatureFormatOk: sigOkFormat,
+          signaturePrefix: signature.slice(0, 32),
+          receivedHexLength: recvLen,
+          rawBodyLength: raw.length,
+          hmacSecretConfiguredLength: hmacSecret.length,
+        },
+        'POST /webhook: HMAC validation failed — returning 200 for Meta diagnostics (temporary)'
+      );
+      res.status(200).json({ success: true, diagnostic: 'accepted_without_verification' });
       return;
     }
     const payload = req.body as unknown;
