@@ -24,6 +24,8 @@ const createAppBody = z.object({
 const patchAppBody = z.object({
   name: z.string().min(1).optional(),
   callbackUrl: z.string().url().optional(),
+  phoneNumberId: z.string().min(1).optional(),
+  wabaId: z.string().min(1).optional(),
   metaAccessToken: z.string().min(1).optional(),
   isActive: z.boolean().optional(),
 });
@@ -140,11 +142,21 @@ export function createAdminRouter(
     const updates: Partial<typeof apps.$inferInsert> = { updatedAt: now };
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if (parsed.data.callbackUrl !== undefined) updates.callbackUrl = parsed.data.callbackUrl;
+    if (parsed.data.phoneNumberId !== undefined) updates.phoneNumberId = parsed.data.phoneNumberId;
+    if (parsed.data.wabaId !== undefined) updates.wabaId = parsed.data.wabaId;
     if (parsed.data.isActive !== undefined) updates.isActive = parsed.data.isActive;
     if (parsed.data.metaAccessToken !== undefined) {
       updates.metaAccessToken = encryptToken(parsed.data.metaAccessToken, encryptionKey);
     }
-    db.update(apps).set(updates).where(eq(apps.id, id)).run();
+    try {
+      db.update(apps).set(updates).where(eq(apps.id, id)).run();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Update failed';
+      res.status(400).json({
+        error: { code: 'VALIDATION_ERROR' as const, message: msg },
+      });
+      return;
+    }
     const updated = db.select().from(apps).where(eq(apps.id, id)).limit(1).all()[0];
     res.json(patchAppPublic(updated));
   });
