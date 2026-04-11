@@ -49,9 +49,15 @@ interface WaValue {
   statuses?: Array<Record<string, unknown>>;
 }
 
+type MetaWebhookChange = {
+  field?: string;
+  value?: unknown;
+  rawPayload: string | null;
+};
+
 /** Un evento lógico = cada `change` de Meta; si no hay estructura estándar, un único evento con el body completo. */
-function extractMetaChanges(payload: unknown): Array<{ field?: string; value: unknown; rawPayload: string }> {
-  const out: Array<{ field?: string; value: unknown; rawPayload: string }> = [];
+function extractMetaChanges(payload: unknown): MetaWebhookChange[] {
+  const out: MetaWebhookChange[] = [];
   if (!payload || typeof payload !== 'object') {
     out.push({ rawPayload: safeJsonStringify(payload) });
     return out;
