@@ -43,9 +43,11 @@ describe('admin apps CRUD', () => {
     const list = await request(app).get('/admin/apps').set('X-Admin-Secret', ADMIN);
     expect(list.status).toBe(200);
     expect(Array.isArray(list.body)).toBe(true);
-    expect(list.body[0]).not.toHaveProperty('apiKeyHash');
-    expect(list.body[0]).not.toHaveProperty('metaAccessToken');
-    expect(list.body[0].phoneNumberId).toBe('pnid-1');
+    const created = list.body.find((a: { phoneNumberId?: string }) => a.phoneNumberId === 'pnid-1');
+    expect(created).toBeDefined();
+    expect(created).not.toHaveProperty('apiKeyHash');
+    expect(created).not.toHaveProperty('metaAccessToken');
+    expect(created!.phoneNumberId).toBe('pnid-1');
   });
 
   it('PATCH, rotate-key, DELETE (soft) work', async () => {

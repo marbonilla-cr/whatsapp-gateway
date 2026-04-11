@@ -24,6 +24,7 @@ export const messageLogs = sqliteTable('message_logs', {
   toNumber: text('to_number').notNull(),
   messageType: text('message_type').notNull(),
   bodyPreview: text('body_preview'),
+  rawPayload: text('raw_payload'),
   metaMessageId: text('meta_message_id'),
   status: text('status').notNull().default('sent'),
   errorMessage: text('error_message'),

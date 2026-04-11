@@ -35,7 +35,7 @@ describe('POST /webhook', () => {
       .set('x-hub-signature-256', 'sha256=deadbeef')
       .send(raw);
     expect(res.status).toBe(200);
-    expect(res.body.diagnostic).toBe('accepted_without_verification');
+    expect(res.body.success).toBe(true);
   });
 
   it('returns 200 when signature is valid', async () => {

@@ -46,6 +46,8 @@ export type MessageLog = {
   toNumber: string;
   messageType: string;
   bodyPreview: string | null;
+  /** JSON del evento Meta (diagnóstico). */
+  rawPayload: string | null;
   metaMessageId: string | null;
   status: string;
   errorMessage: string | null;

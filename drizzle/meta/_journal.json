@@ -8,6 +8,13 @@
       "when": 1775160335961,
       "tag": "0000_initial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775160400000,
+      "tag": "0001_message_logs_raw_payload",
+      "breakpoints": true
     }
   ]
 }

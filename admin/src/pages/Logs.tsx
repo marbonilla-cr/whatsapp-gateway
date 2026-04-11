@@ -150,24 +150,24 @@ export function Logs() {
               <TableHead className="hidden md:table-cell">Para</TableHead>
               <TableHead>Tipo</TableHead>
               <TableHead className="hidden lg:table-cell">Preview</TableHead>
+              <TableHead className="hidden xl:table-cell">Raw Meta</TableHead>
               <TableHead>Estado</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
                   Cargando…
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
                   <p className="font-medium text-foreground">No hay logs que coincidan</p>
                   <p className="mt-2 max-w-md mx-auto text-sm">
-                    Si esperabas ver mensajes entrantes de Meta: verificá el webhook, la firma (META_APP_SECRET), que el{' '}
-                    <code className="rounded bg-muted px-1">phone_number_id</code> coincida con una app activa, y que el
-                    payload incluya <code className="rounded bg-muted px-1">messages</code>.
+                    En modo diagnóstico el gateway registra todos los eventos de Meta (mensajes, estados, etc.). Si no ves
+                    filas: verificá el webhook y que el servidor esté recibiendo POST.
                   </p>
                 </TableCell>
               </TableRow>
@@ -188,6 +188,18 @@ export function Logs() {
                   <TableCell className="text-xs">{log.messageType}</TableCell>
                   <TableCell className="hidden lg:table-cell max-w-[200px] truncate text-xs text-muted-foreground">
                     {log.bodyPreview ?? '—'}
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell max-w-[min(24rem,40vw)] align-top text-xs">
+                    {log.rawPayload ? (
+                      <details className="cursor-pointer">
+                        <summary className="text-muted-foreground">Ver JSON</summary>
+                        <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-muted p-2 text-[10px] leading-snug whitespace-pre-wrap break-all">
+                          {log.rawPayload}
+                        </pre>
+                      </details>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell className="text-xs">{log.status}</TableCell>
                 </TableRow>
