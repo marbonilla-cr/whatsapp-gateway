@@ -5,7 +5,10 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "npm run build:admin && npm run build:gateway && npm run copy:admin-ui",
+    "build:gateway": "tsc",
+    "build:admin": "npm ci --prefix admin && VITE_GATEWAY_URL= npm run build --prefix admin",
+    "copy:admin-ui": "node scripts/copy-admin-ui.js",
     "start": "node dist/server.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -16,7 +19,7 @@
     "test:watch": "vitest"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "dependencies": {
     "cors": "^2.8.5",

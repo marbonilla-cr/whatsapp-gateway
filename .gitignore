@@ -9,3 +9,4 @@ data/*.db-*
 
 # Agent / planning artifacts (no commitear)
 .agent-handoff.md
+**/.DS_Store

@@ -142,6 +142,39 @@ export function buildApp() {
   app.use('/health', createHealthRouter(() => getDb(databaseUrl)));
   app.use('/admin', createAdminRouter(() => getDb(databaseUrl), encryptionKey, adminAuth));
 
+  const adminUiDir = path.join(__dirname, 'admin-ui');
+  if (fs.existsSync(adminUiDir)) {
+    logger.info({ adminUiDir }, 'admin UI enabled');
+    app.use(express.static(adminUiDir));
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        next();
+        return;
+      }
+      const p = req.path;
+      if (
+        p.startsWith('/webhook') ||
+        p.startsWith('/send') ||
+        p.startsWith('/health') ||
+        p.startsWith('/admin')
+      ) {
+        next();
+        return;
+      }
+      if (path.extname(p) !== '' && p !== '/') {
+        next();
+        return;
+      }
+      res.sendFile(path.join(adminUiDir, 'index.html'), (err) => {
+        if (err) next(err);
+      });
+    });
+  } else {
+    logger.warn(
+      'Admin UI missing (dist/admin-ui not next to server.js). Run full `npm run build` so /login works; until then use the admin app locally with VITE_GATEWAY_URL.'
+    );
+  }
+
   app.use((_req: Request, res: Response) => {
     res.status(404).json({
       error: { code: 'NOT_FOUND' as const, message: 'Not found' },
