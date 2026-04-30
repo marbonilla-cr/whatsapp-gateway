@@ -49,14 +49,14 @@ export interface SendImagePayload {
   messaging_product: 'whatsapp';
   to: string;
   type: 'image';
-  image: { link?: string; id?: string };
+  image: { link?: string; id?: string; caption?: string };
 }
 
 export interface SendDocumentPayload {
   messaging_product: 'whatsapp';
   to: string;
   type: 'document';
-  document: { link?: string; id?: string; filename?: string };
+  document: { link?: string; id?: string; filename?: string; caption?: string };
 }
 
 export interface SendInteractivePayload {
@@ -77,6 +77,12 @@ export interface MetaResponse {
   messageId?: string;
   success?: boolean;
   [key: string]: unknown;
+}
+
+export interface MetaMediaUploadResponse {
+  id: string;
+  mime_type?: string;
+  sha256?: string;
 }
 
 export interface MetaError {
@@ -112,11 +118,25 @@ export interface QualityRating {
   messagingLimit: MessagingLimit;
 }
 
+export interface UploadMediaResponse {
+  id: string;
+  mime_type?: string;
+  sha256?: string;
+}
+
 export interface TokenResponse {
   accessToken: string;
   tokenType?: string;
   expiresIn?: number;
   expiresAt?: Date;
+  [key: string]: unknown;
+}
+
+export interface MediaUploadResult {
+  id: string;
+  mime_type?: string;
+  sha256?: string;
+  file_size?: number;
   [key: string]: unknown;
 }
 

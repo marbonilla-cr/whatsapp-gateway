@@ -13,6 +13,9 @@ import { createAdminRouter } from './routes/admin';
 import { createHealthRouter } from './routes/health';
 import { createSendRouter } from './routes/send';
 import { createWebhookRouter } from './routes/webhook';
+import { createV1Router } from './routes/v1';
+import { createOpenApiRouter } from './routes/openapi';
+import { createDocsRouter } from './routes/docs';
 import { shutdown as shutdownQueues } from './queue';
 import { startForwardWorker, stopForwardWorker } from './queue/workers/forwardWorker';
 
@@ -72,7 +75,13 @@ export async function buildApp() {
     cors({
       origin: true,
       credentials: true,
-      allowedHeaders: ['Content-Type', 'X-Admin-Secret', 'X-Gateway-Key', 'x-hub-signature-256'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Admin-Secret',
+        'X-Gateway-Key',
+        'x-hub-signature-256',
+      ],
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     })
   );
@@ -94,6 +103,7 @@ export async function buildApp() {
       },
     })
   );
+  app.use(express.urlencoded({ extended: true }));
 
   const sendLimiter = rateLimit({
     windowMs: 60_000,
@@ -108,6 +118,7 @@ export async function buildApp() {
     max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path.startsWith('/v1'),
   });
 
   app.use('/send', sendLimiter);
@@ -118,6 +129,9 @@ export async function buildApp() {
 
   app.use('/webhook', createWebhookRouter(() => getDb(), metaVerifyToken, metaWebhookHmacSecret, logger));
   app.use('/send', createSendRouter(() => getDb(), encryptionKey, gatewayAuth));
+  app.use('/v1', createV1Router(() => getDb(), encryptionKey));
+  app.use('/openapi.json', createOpenApiRouter());
+  app.use('/docs', createDocsRouter());
   app.use('/health', createHealthRouter(() => getDb()));
   app.use('/admin', createAdminRouter(() => getDb(), encryptionKey, adminAuth));
 
@@ -136,6 +150,9 @@ export async function buildApp() {
       if (
         p.startsWith('/webhook') ||
         p.startsWith('/send') ||
+        p.startsWith('/v1') ||
+        p.startsWith('/openapi.json') ||
+        p.startsWith('/docs') ||
         p.startsWith('/health') ||
         p.startsWith('/admin')
       ) {

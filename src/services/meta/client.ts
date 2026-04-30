@@ -6,6 +6,7 @@ import { decryptToken } from '../crypto';
 import type {
   MetaError,
   MetaResponse,
+  MetaMediaUploadResponse,
   PhoneNumber,
   QualityRating,
   SendPayload,
@@ -233,6 +234,59 @@ export class MetaApiClient {
     await this.request('DELETE', `${this.wabaId}/message_templates`, {
       query: { name },
     });
+  }
+
+  /**
+   * Uploads a media binary to a specific WhatsApp phone number.
+   */
+  async uploadMedia(phoneNumberId: string, media: {
+    file: Buffer;
+    filename: string;
+    mimeType: string;
+  }): Promise<MetaMediaUploadResponse> {
+    const form = new FormData();
+    const blob = new Blob([media.file], { type: media.mimeType });
+    form.set('messaging_product', 'whatsapp');
+    form.set('file', blob, media.filename);
+
+    const url = `${META_GRAPH_BASE}/${phoneNumberId}/media`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+      },
+      body: form,
+    });
+
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+
+    if (!response.ok) {
+      const metaError = parseMetaError(body);
+      throw new MetaApiError(
+        metaError?.message ?? `Meta media upload failed (${response.status})`,
+        response.status,
+        body,
+        metaError?.code,
+        metaError?.error_subcode,
+        metaError?.fbtrace_id
+      );
+    }
+
+    const parsed = body as Record<string, unknown> | null;
+    const id = parsed && typeof parsed.id === 'string' ? parsed.id : '';
+    if (!id) {
+      throw new MetaApiError('Meta media response missing id', 502, body);
+    }
+    return {
+      id,
+      mime_type: parsed && typeof parsed.mime_type === 'string' ? parsed.mime_type : undefined,
+      sha256: parsed && typeof parsed.sha256 === 'string' ? parsed.sha256 : undefined,
+    };
   }
 
   /**

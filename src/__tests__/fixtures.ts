@@ -26,6 +26,8 @@ export async function createTestApp(
   opts: {
     apiKey: string;
     encryptionKey: string;
+    appId?: string;
+    name?: string;
     metaPhoneNumberId?: string;
     metaWabaId?: string;
     tenantId?: string;
@@ -68,10 +70,10 @@ export async function createTestApp(
   });
 
   await db.insert(apps).values({
-    id: 'appidfortest',
+    id: opts.appId ?? 'appidfortest',
     tenantId,
     phoneNumberId: phoneId,
-    name: 'Test',
+    name: opts.name ?? 'Test',
     vertical: 'custom',
     callbackUrl: 'https://example.com/cb',
     apiKeyHash: hashApiKey(opts.apiKey),
