@@ -2,10 +2,8 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { AppDb } from '../db';
 import { messages } from '../db/schema';
-import { decryptToken, randomId16 } from '../services/crypto';
-import { sendMessage } from '../services/meta';
-import type { MetaMessagePayload } from '../types';
-import { MetaApiError } from '../types';
+import { randomId16 } from '../services/crypto';
+import { getMetaApiClient, MetaApiError, type SendPayload } from '../services/meta';
 import { createGatewayAuthMiddleware } from '../middleware/auth';
 
 const sendBody = z.discriminatedUnion('type', [
@@ -41,7 +39,7 @@ const sendBody = z.discriminatedUnion('type', [
   }),
 ]);
 
-function buildMetaPayload(parsed: z.infer<typeof sendBody>): MetaMessagePayload {
+function buildMetaPayload(parsed: z.infer<typeof sendBody>): SendPayload {
   const base = { messaging_product: 'whatsapp' as const, to: parsed.to };
   switch (parsed.type) {
     case 'text':
@@ -103,22 +101,19 @@ export function createSendRouter(
       });
       return;
     }
-    let accessToken: string;
-    try {
-      accessToken = decryptToken(app.accessTokenEncrypted, encryptionKey);
-    } catch {
-      res.status(500).json({
-        error: {
-          code: 'INTERNAL_ERROR' as const,
-          message: 'Failed to decrypt credentials',
-        },
-      });
-      return;
-    }
     const metaPayload = buildMetaPayload(parsed.data);
     let messageId: string;
+    const db = getDb();
     try {
-      const out = await sendMessage(app.metaPhoneNumberId, accessToken, metaPayload);
+      const client = await getMetaApiClient({
+        db,
+        wabaId: app.wabaId,
+        encryptionKey,
+      });
+      const out = await client.sendMessage(app.metaPhoneNumberId, metaPayload);
+      if (!out.messageId) {
+        throw new MetaApiError('Meta response missing message id', 502, out);
+      }
       messageId = out.messageId;
     } catch (e) {
       if (e instanceof MetaApiError) {
@@ -138,7 +133,6 @@ export function createSendRouter(
       });
       return;
     }
-    const db = getDb();
     try {
       await db.insert(messages).values({
         id: randomId16(),
