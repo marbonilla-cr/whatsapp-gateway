@@ -8,6 +8,9 @@ import pinoHttp from 'pino-http';
 import http from 'node:http';
 import { initDb, getDb, resetDbSingleton } from './db';
 import { createAdminAuthMiddleware } from './middleware/adminAuth';
+import { createAuthRouter } from './routes/auth';
+import { createAdminV2Router } from './routes/admin/v2';
+import { bootstrapSuperAdmin } from './services/auth';
 import { createGatewayAuthMiddleware } from './middleware/auth';
 import { createAdminRouter } from './routes/admin';
 import { createHealthRouter } from './routes/health';
@@ -31,6 +34,8 @@ const CRITICAL_ENV = [
   'META_VERIFY_TOKEN',
   'DATABASE_URL',
   'LOG_LEVEL',
+  'JWT_ACCESS_SECRET',
+  'JWT_REFRESH_SECRET',
 ] as const;
 
 function validateEnv(): void {
@@ -63,6 +68,7 @@ export async function buildApp() {
   const metaWebhookHmacSecret = process.env.META_APP_SECRET ?? encryptionKey;
 
   await initDb(databaseUrl);
+  await bootstrapSuperAdmin(getDb());
 
   const logger = pino({
     level: logLevel,
@@ -130,7 +136,7 @@ export async function buildApp() {
   app.use('/send', sendLimiter);
   app.use(globalLimiter);
 
-  const adminAuth = createAdminAuthMiddleware(adminSecret);
+  const adminAuth = createAdminAuthMiddleware(adminSecret, logger);
   const gatewayAuth = createGatewayAuthMiddleware(() => getDb());
 
   app.use('/webhook', createWebhookRouter(() => getDb(), metaVerifyToken, metaWebhookHmacSecret, logger));
@@ -139,6 +145,8 @@ export async function buildApp() {
   app.use('/openapi.json', createOpenApiRouter());
   app.use('/docs', createDocsRouter());
   app.use('/health', createHealthRouter(() => getDb()));
+  app.use('/auth', createAuthRouter(() => getDb()));
+  app.use('/admin/v2', createAdminV2Router(() => getDb(), encryptionKey));
   app.use('/admin', createAdminRouter(() => getDb(), encryptionKey, adminAuth));
   app.use('/onboard', createOnboardRouter(() => getDb(), encryptionKey, adminAuth, logger));
 
@@ -166,6 +174,7 @@ export async function buildApp() {
         p.startsWith('/docs') ||
         p.startsWith('/health') ||
         p.startsWith('/admin') ||
+        p.startsWith('/auth') ||
         p.startsWith('/onboard')
       ) {
         next();

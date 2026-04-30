@@ -6,31 +6,28 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { api, getGatewayBase } from '@/lib/api';
+import { getGatewayBase } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 export function Login() {
   const [, setLocation] = useLocation();
-  const [secret, setSecret] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { login, loading } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = secret.trim();
-    if (!trimmed) {
-      toast.error('Ingresá el Admin Secret');
+    const em = email.trim().toLowerCase();
+    if (!em || !password) {
+      toast.error('Completá email y contraseña');
       return;
     }
-    setLoading(true);
-    sessionStorage.setItem('adminSecret', trimmed);
     try {
-      await api.listApps();
+      await login(em, password);
       toast.success('Sesión iniciada');
-      setLocation('/apps');
+      setLocation('/');
     } catch {
-      sessionStorage.removeItem('adminSecret');
-      toast.error('Secret incorrecto');
-    } finally {
-      setLoading(false);
+      toast.error('Credenciales inválidas');
     }
   }
 
@@ -44,7 +41,7 @@ export function Login() {
             <MessageCircle className="h-8 w-8" />
           </div>
           <CardTitle className="text-2xl">WhatsApp Gateway</CardTitle>
-          <CardDescription>Panel de administración — ingresá tu Admin Secret</CardDescription>
+          <CardDescription>Panel de administración — email y contraseña</CardDescription>
           {base ? (
             <p className="pt-2 text-xs text-muted-foreground">Gateway: {base}</p>
           ) : (
@@ -54,18 +51,27 @@ export function Login() {
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="adminSecret">Admin Secret</Label>
+              <Label htmlFor="email">Email</Label>
               <Input
-                id="adminSecret"
+                id="email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Contraseña</Label>
+              <Input
+                id="password"
                 type="password"
-                autoComplete="off"
-                placeholder="Pegá el secreto de Railway"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading || !base}>
-              {loading ? 'Verificando…' : 'Entrar'}
+              {loading ? 'Entrando…' : 'Entrar'}
             </Button>
           </form>
         </CardContent>

@@ -1,10 +1,22 @@
+import { getAccessToken, refreshAccessToken, clearSession } from './auth';
+
 const BASE = import.meta.env.VITE_GATEWAY_URL ?? '';
 
-function adminHeaders(): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    'X-Admin-Secret': sessionStorage.getItem('adminSecret') ?? '',
-  };
+async function fetchWithAuth(path: string, init: RequestInit = {}, retried = false): Promise<Response> {
+  const token = getAccessToken();
+  const headers = new Headers(init.headers);
+  headers.set('Content-Type', headers.get('Content-Type') ?? 'application/json');
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const r = await fetch(`${BASE}${path}`, { ...init, headers });
+  if (r.status === 401 && !retried) {
+    const newTok = await refreshAccessToken();
+    if (newTok) {
+      return fetchWithAuth(path, init, true);
+    }
+  }
+  return r;
 }
 
 async function handleJson<T>(r: Response): Promise<T> {
@@ -16,6 +28,10 @@ async function handleJson<T>(r: Response): Promise<T> {
     data = { raw: text };
   }
   if (!r.ok) {
+    if (r.status === 401) {
+      clearSession();
+      window.location.assign('/login');
+    }
     const errObj =
       typeof data === 'object' && data !== null && 'error' in data
         ? (data as { error?: { message?: string; code?: string } }).error
@@ -28,10 +44,12 @@ async function handleJson<T>(r: Response): Promise<T> {
 
 export type GatewayApp = {
   id: string;
+  tenantId: string;
   name: string;
   apiKeyPrefix: string;
   callbackUrl: string;
   phoneNumberId: string;
+  /** Meta WABA id (Graph). */
   wabaId: string;
   isActive: boolean;
   createdAt: string;
@@ -41,13 +59,13 @@ export type GatewayApp = {
 export type MessageLog = {
   id: string;
   appId: string;
-  direction: 'IN' | 'OUT';
+  tenantId?: string;
+  direction: string;
   fromNumber: string;
   toNumber: string;
   messageType: string;
   bodyPreview: string | null;
-  /** JSON del evento Meta (diagnóstico). */
-  rawPayload: string | null;
+  rawPayload: unknown;
   metaMessageId: string | null;
   status: string;
   errorMessage: string | null;
@@ -73,6 +91,41 @@ export type OnboardStatusResponse = {
   completed_at: string | null;
 };
 
+export type TenantRow = {
+  id: string;
+  businessName: string;
+  contactEmail: string;
+  status: string;
+  plan: string;
+  countryCode: string;
+};
+
+export type WabaRow = {
+  id: string;
+  metaWabaId: string;
+  status: string;
+  tokenExpiresAt: string | null;
+};
+
+export type TemplateRow = {
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  components: unknown[];
+  rejected_reason: string | null;
+};
+
+export type AuditRow = {
+  id: string;
+  tenantId: string | null;
+  action: string;
+  actorUserId: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  createdAt: string;
+};
+
 function metaRedirectUriForOnboarding(): string {
   const v = import.meta.env.VITE_META_REDIRECT_URI as string | undefined;
   if (v && v.trim()) return v.trim();
@@ -81,49 +134,84 @@ function metaRedirectUriForOnboarding(): string {
 }
 
 export const api = {
-  listApps: () => fetch(`${BASE}/admin/apps`, { headers: adminHeaders() }).then((r) => handleJson<GatewayApp[]>(r)),
+  listTenants: () =>
+    fetchWithAuth('/admin/v2/tenants').then((r) => handleJson<TenantRow[]>(r)),
+
+  getTenant: (id: string) =>
+    fetchWithAuth(`/admin/v2/tenants/${encodeURIComponent(id)}`).then((r) => handleJson<TenantRow>(r)),
+
+  createTenant: (body: object) =>
+    fetchWithAuth('/admin/v2/tenants', { method: 'POST', body: JSON.stringify(body) }).then((r) =>
+      handleJson<TenantRow>(r)
+    ),
+
+  listApps: (tenantId: string) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/apps`).then((r) => handleJson<GatewayApp[]>(r)),
 
   startOnboarding: (tenantId: string) =>
-    fetch(`${BASE}/onboard/start`, {
+    fetchWithAuth('/onboard/start', {
       method: 'POST',
-      headers: adminHeaders(),
       body: JSON.stringify({ tenant_id: tenantId, redirect_uri: metaRedirectUriForOnboarding() }),
     }).then((r) => handleJson<OnboardStartResponse>(r)),
 
   getOnboardingStatus: (sessionId: string) =>
-    fetch(`${BASE}/onboard/status/${sessionId}`, { headers: adminHeaders() }).then((r) =>
-      handleJson<OnboardStatusResponse>(r)
-    ),
+    fetchWithAuth(`/onboard/status/${sessionId}`).then((r) => handleJson<OnboardStatusResponse>(r)),
 
-  createApp: (data: object) =>
-    fetch(`${BASE}/admin/apps`, {
+  createApp: (tenantId: string, data: object) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/apps`, {
       method: 'POST',
-      headers: adminHeaders(),
       body: JSON.stringify(data),
     }).then((r) => handleJson<CreateAppResponse>(r)),
 
-  updateApp: (id: string, data: object) =>
-    fetch(`${BASE}/admin/apps/${id}`, {
+  updateApp: (tenantId: string, id: string, data: object) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/apps/${id}`, {
       method: 'PATCH',
-      headers: adminHeaders(),
       body: JSON.stringify(data),
     }).then((r) => handleJson<GatewayApp & { updatedAt?: string }>(r)),
 
-  rotateKey: (id: string) =>
-    fetch(`${BASE}/admin/apps/${id}/rotate-key`, {
-      method: 'POST',
-      headers: adminHeaders(),
-    }).then((r) => handleJson<{ apiKey: string }>(r)),
+  rotateKey: (tenantId: string, id: string) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/apps/${id}/rotate-key`, { method: 'POST' }).then((r) =>
+      handleJson<{ apiKey: string }>(r)
+    ),
 
-  deleteApp: async (id: string) => {
-    const r = await fetch(`${BASE}/admin/apps/${id}`, { method: 'DELETE', headers: adminHeaders() });
+  deleteApp: async (tenantId: string, id: string) => {
+    const r = await fetchWithAuth(`/admin/v2/tenants/${tenantId}/apps/${id}`, { method: 'DELETE' });
     if (r.status === 204) return;
     await handleJson(r);
   },
 
-  getLogs: () => fetch(`${BASE}/admin/logs`, { headers: adminHeaders() }).then((r) => handleJson<MessageLog[]>(r)),
+  getMessages: (tenantId: string, limit = 100) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/messages?limit=${limit}`).then((r) =>
+      handleJson<{ data: MessageLog[] }>(r)
+    ),
 
-  /** POST /send — requiere API key de la app (no el admin secret). */
+  listWabas: (tenantId: string) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/wabas`).then((r) => handleJson<WabaRow[]>(r)),
+
+  listTemplates: (tenantId: string, wabaId: string) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/templates?waba_id=${encodeURIComponent(wabaId)}`).then((r) =>
+      handleJson<{ data: TemplateRow[] }>(r)
+    ),
+
+  createTemplate: (tenantId: string, wabaId: string, body: object) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/templates?waba_id=${encodeURIComponent(wabaId)}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then((r) => handleJson<TemplateRow>(r)),
+
+  deleteTemplate: async (tenantId: string, wabaId: string, name: string) => {
+    const r = await fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/templates/${encodeURIComponent(name)}?waba_id=${encodeURIComponent(wabaId)}`,
+      { method: 'DELETE' }
+    );
+    if (r.status === 204) return;
+    await handleJson(r);
+  },
+
+  getAuditLog: (limit = 50) =>
+    fetchWithAuth(`/admin/v2/audit-log?limit=${limit}`).then((r) => handleJson<{ data: AuditRow[] }>(r)),
+
+  /** POST /send — requiere API key de la app (no JWT). */
   sendMessage: (gatewayApiKey: string, body: object) =>
     fetch(`${BASE}/send`, {
       method: 'POST',

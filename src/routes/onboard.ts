@@ -6,6 +6,32 @@ import { onboardingSessions } from '../db/schema';
 import { DEFAULT_CLIENT_TENANT_ID } from '../db/constants';
 import { completeOnboarding, generateSignedState } from '../services/onboarding';
 
+/** When using JWT admin auth, restrict onboarding to the caller's tenant (super_admin can use any). */
+function requireOnboardTenantScope(req: Request, res: Response, next: NextFunction): void {
+  const u = req.adminUser;
+  if (!u) {
+    next();
+    return;
+  }
+  if (u.role === 'super_admin') {
+    next();
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+  const tenantFromBody = typeof body.tenant_id === 'string' ? body.tenant_id.trim() : '';
+  const tenantId =
+    tenantFromBody ||
+    (req.query.tenant_id as string | undefined)?.trim() ||
+    DEFAULT_CLIENT_TENANT_ID;
+  if (tenantId !== u.tenantId) {
+    res.status(403).json({
+      error: { code: 'FORBIDDEN' as const, message: 'tenant_id does not match authenticated user' },
+    });
+    return;
+  }
+  next();
+}
+
 function adminPublicBaseUrl(): string {
   const explicit = process.env.ADMIN_PUBLIC_URL?.trim();
   if (explicit) {
@@ -72,10 +98,10 @@ export function createOnboardRouter(
     }
   }
 
-  r.get('/start', adminAuth, (req, res, next) => {
+  r.get('/start', adminAuth, requireOnboardTenantScope, (req, res, next) => {
     void handleStart(req, res).catch(next);
   });
-  r.post('/start', adminAuth, (req, res, next) => {
+  r.post('/start', adminAuth, requireOnboardTenantScope, (req, res, next) => {
     void handleStart(req, res).catch(next);
   });
 
@@ -122,6 +148,11 @@ export function createOnboardRouter(
     const row = rows[0];
     if (!row) {
       res.status(404).json({ error: { code: 'NOT_FOUND' as const, message: 'Session not found' } });
+      return;
+    }
+    const u = req.adminUser;
+    if (u && u.role !== 'super_admin' && row.tenantId !== u.tenantId) {
+      res.status(403).json({ error: { code: 'FORBIDDEN' as const, message: 'Session belongs to another tenant' } });
       return;
     }
     res.status(200).json({

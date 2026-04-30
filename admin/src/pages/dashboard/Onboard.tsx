@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { toast } from 'sonner';
-import { DEFAULT_CLIENT_TENANT_ID } from '@/lib/constants';
+import { useAuth } from '@/contexts/AuthContext';
 import { EmbeddedSignupButton } from '@/components/EmbeddedSignupButton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
@@ -9,7 +9,8 @@ function useQueryParams(): URLSearchParams {
   return useMemo(() => new URLSearchParams(window.location.search), []);
 }
 
-export function Onboard() {
+export function DashboardOnboard() {
+  const { user } = useAuth();
   const params = useQueryParams();
   const onboard = params.get('onboard');
   const reason = params.get('reason');
@@ -58,7 +59,7 @@ export function Onboard() {
         </CardHeader>
         <CardContent className="space-y-4">
           <EmbeddedSignupButton
-            tenantId={DEFAULT_CLIENT_TENANT_ID}
+            tenantId={user!.tenantId}
             onSuccess={() => toast.success('Onboarding completado')}
             onError={(m) => toast.error(m)}
           />

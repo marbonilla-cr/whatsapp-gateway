@@ -1,14 +1,13 @@
-import { Router, type Request, type Response, type NextFunction } from 'express';
-import { desc, eq } from 'drizzle-orm';
+import { Router, type Request, type Response } from 'express';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import type { AppDb } from '../db';
-import { apps, messages, phoneNumbers, tenants, wabas } from '../db/schema';
-import { DEFAULT_CLIENT_TENANT_ID } from '../db/constants';
-import { encryptToken, generateApiKey, hashApiKey, apiKeyPrefixFromFullKey, randomId12 } from '../services/crypto';
-import { ensureWabaAndPhone, listAppPublic, patchAppPublic } from './admin/helpers';
+import type { AppDb } from '../../../db';
+import { apps, phoneNumbers, tenants, wabas } from '../../../db/schema';
+import { requireAuth, requireRole, requireTenantAccess } from '../../../middleware/jwt';
+import { encryptToken, generateApiKey, hashApiKey, apiKeyPrefixFromFullKey, randomId12 } from '../../../services/crypto';
+import { ensureWabaAndPhone, listAppPublic, patchAppPublic } from '../helpers';
 
 const createAppBody = z.object({
-  tenantId: z.string().min(1).optional(),
   name: z.string().min(1),
   callbackUrl: z.string().url(),
   phoneNumberId: z.string().min(1),
@@ -25,37 +24,40 @@ const patchAppBody = z.object({
   isActive: z.boolean().optional(),
 });
 
-export function createAdminRouter(
-  getDb: () => AppDb,
-  encryptionKey: string,
-  adminAuth: (req: Request, res: Response, next: NextFunction) => void
-) {
-  const r = Router();
-  r.use(adminAuth);
+export function createAppsV2Router(getDb: () => AppDb, encryptionKey: string) {
+  const r = Router({ mergeParams: true });
+  r.use(requireAuth);
+  r.use(requireTenantAccess('tenant_id'));
+  r.use(requireRole('super_admin', 'tenant_admin', 'tenant_operator'));
 
-  r.get('/logs', async (_req: Request, res: Response) => {
-    const rows = await getDb()
-      .select()
-      .from(messages)
-      .orderBy(desc(messages.createdAt))
-      .limit(50);
-    res.json(rows);
+  r.get('/', async (req: Request, res: Response) => {
+    const tenantId = req.params.tenant_id!;
+    const db = getDb();
+    const rows = await db
+      .select({
+        app: apps,
+        metaPhoneNumberId: phoneNumbers.metaPhoneNumberId,
+        metaWabaId: wabas.metaWabaId,
+      })
+      .from(apps)
+      .innerJoin(phoneNumbers, eq(apps.phoneNumberId, phoneNumbers.id))
+      .innerJoin(wabas, eq(phoneNumbers.wabaId, wabas.id))
+      .where(eq(apps.tenantId, tenantId));
+    res.json(rows.map(({ app, metaPhoneNumberId, metaWabaId }) => listAppPublic(app, metaPhoneNumberId, metaWabaId)));
   });
 
-  r.post('/apps', async (req: Request, res: Response) => {
+  r.post('/', async (req: Request, res: Response) => {
+    const tenantId = req.params.tenant_id!;
     const parsed = createAppBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         error: {
           code: 'VALIDATION_ERROR' as const,
-          message: parsed.error.flatten().fieldErrors
-            ? JSON.stringify(parsed.error.flatten().fieldErrors)
-            : 'Invalid body',
+          message: JSON.stringify(parsed.error.flatten()),
         },
       });
       return;
     }
-    const tenantId = parsed.data.tenantId ?? DEFAULT_CLIENT_TENANT_ID;
     const db = getDb();
     const tenantRows = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
     if (!tenantRows[0]) {
@@ -124,36 +126,25 @@ export function createAdminRouter(
     });
   });
 
-  r.get('/apps', async (_req: Request, res: Response) => {
-    const db = getDb();
-    const rows = await db
-      .select({
-        app: apps,
-        metaPhoneNumberId: phoneNumbers.metaPhoneNumberId,
-        metaWabaId: wabas.metaWabaId,
-      })
-      .from(apps)
-      .innerJoin(phoneNumbers, eq(apps.phoneNumberId, phoneNumbers.id))
-      .innerJoin(wabas, eq(phoneNumbers.wabaId, wabas.id));
-    res.json(rows.map(({ app, metaPhoneNumberId, metaWabaId }) => listAppPublic(app, metaPhoneNumberId, metaWabaId)));
-  });
-
-  r.patch('/apps/:id', async (req: Request, res: Response) => {
+  r.patch('/:app_id', async (req: Request, res: Response) => {
+    const tenantId = req.params.tenant_id!;
+    const { app_id: id } = req.params;
     const parsed = patchAppBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         error: {
           code: 'VALIDATION_ERROR' as const,
-          message: parsed.error.flatten().fieldErrors
-            ? JSON.stringify(parsed.error.flatten().fieldErrors)
-            : 'Invalid body',
+          message: JSON.stringify(parsed.error.flatten()),
         },
       });
       return;
     }
-    const { id } = req.params;
     const db = getDb();
-    const existing = await db.select().from(apps).where(eq(apps.id, id)).limit(1);
+    const existing = await db
+      .select()
+      .from(apps)
+      .where(and(eq(apps.id, id!), eq(apps.tenantId, tenantId)))
+      .limit(1);
     const row = existing[0];
     if (!row) {
       res.status(404).json({
@@ -166,16 +157,6 @@ export function createAdminRouter(
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if (parsed.data.callbackUrl !== undefined) updates.callbackUrl = parsed.data.callbackUrl;
     if (parsed.data.isActive !== undefined) updates.isActive = parsed.data.isActive;
-
-    if (parsed.data.metaAccessToken !== undefined) {
-      const phone = (
-        await db.select().from(phoneNumbers).where(eq(phoneNumbers.id, row.phoneNumberId)).limit(1)
-      )[0];
-      if (phone) {
-        const enc = encryptToken(parsed.data.metaAccessToken, encryptionKey);
-        await db.update(wabas).set({ accessTokenEncrypted: enc, updatedAt: now }).where(eq(wabas.id, phone.wabaId));
-      }
-    }
 
     const wantsPhoneChange = parsed.data.phoneNumberId !== undefined || parsed.data.wabaId !== undefined;
     if (wantsPhoneChange) {
@@ -211,10 +192,18 @@ export function createAdminRouter(
         });
         return;
       }
+    } else if (parsed.data.metaAccessToken !== undefined) {
+      const phone = (
+        await db.select().from(phoneNumbers).where(eq(phoneNumbers.id, row.phoneNumberId)).limit(1)
+      )[0];
+      if (phone) {
+        const enc = encryptToken(parsed.data.metaAccessToken, encryptionKey);
+        await db.update(wabas).set({ accessTokenEncrypted: enc, updatedAt: now }).where(eq(wabas.id, phone.wabaId));
+      }
     }
 
     try {
-      await db.update(apps).set(updates).where(eq(apps.id, id));
+      await db.update(apps).set(updates).where(eq(apps.id, id!));
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Update failed';
       res.status(400).json({
@@ -222,7 +211,7 @@ export function createAdminRouter(
       });
       return;
     }
-    const updated = (await db.select().from(apps).where(eq(apps.id, id)).limit(1))[0]!;
+    const updated = (await db.select().from(apps).where(eq(apps.id, id!)).limit(1))[0]!;
     const phoneJoin = (
       await db
         .select({ metaPhoneNumberId: phoneNumbers.metaPhoneNumberId, metaWabaId: wabas.metaWabaId })
@@ -234,10 +223,15 @@ export function createAdminRouter(
     res.json(patchAppPublic(updated, phoneJoin?.metaPhoneNumberId, phoneJoin?.metaWabaId));
   });
 
-  r.post('/apps/:id/rotate-key', async (req: Request, res: Response) => {
-    const { id } = req.params;
+  r.post('/:app_id/rotate-key', async (req: Request, res: Response) => {
+    const tenantId = req.params.tenant_id!;
+    const id = req.params.app_id;
     const db = getDb();
-    const existing = await db.select().from(apps).where(eq(apps.id, id)).limit(1);
+    const existing = await db
+      .select()
+      .from(apps)
+      .where(and(eq(apps.id, id!), eq(apps.tenantId, tenantId)))
+      .limit(1);
     const row = existing[0];
     if (!row) {
       res.status(404).json({
@@ -252,14 +246,19 @@ export function createAdminRouter(
     await db
       .update(apps)
       .set({ apiKeyHash, apiKeyPrefix, updatedAt: now })
-      .where(eq(apps.id, id));
+      .where(eq(apps.id, id!));
     res.json({ apiKey });
   });
 
-  r.delete('/apps/:id', async (req: Request, res: Response) => {
-    const { id } = req.params;
+  r.delete('/:app_id', async (req: Request, res: Response) => {
+    const tenantId = req.params.tenant_id!;
+    const id = req.params.app_id;
     const db = getDb();
-    const existing = await db.select().from(apps).where(eq(apps.id, id)).limit(1);
+    const existing = await db
+      .select()
+      .from(apps)
+      .where(and(eq(apps.id, id!), eq(apps.tenantId, tenantId)))
+      .limit(1);
     if (!existing[0]) {
       res.status(404).json({
         error: { code: 'NOT_FOUND' as const, message: 'App not found' },
@@ -267,7 +266,7 @@ export function createAdminRouter(
       return;
     }
     const now = new Date();
-    await db.update(apps).set({ isActive: false, updatedAt: now }).where(eq(apps.id, id));
+    await db.update(apps).set({ isActive: false, updatedAt: now }).where(eq(apps.id, id!));
     res.status(204).send();
   });
 

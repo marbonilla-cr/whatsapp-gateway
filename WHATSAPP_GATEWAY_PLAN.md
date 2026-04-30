@@ -82,7 +82,7 @@ El **WhatsApp Gateway** es la pieza de plumbing que conecta todas las apps verti
 | P3 | Webhook routing multi-bot + BullMQ | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p3-webhook-routing-k9m2-824d` | — | — |
 | P4 | REST API verticales + OpenAPI | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p4-rest-api-18ec-29a1` | #4 | `d46dc5196cbd1e0f602dd72b92d71dae57385070` |
 | P5 | Embedded Signup | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p5-embedded-signup-7297-d3e0` | #5 | `96b2886` |
-| P6 | Admin panel multi-tenant | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p6-admin-multitenant` | — | — |
+| P6 | Admin panel multi-tenant | Feature nueva (8.3) | Cloud | 🔄 BLOQUEADO (parcial — handoff) | `cursor/p6-admin-multitenant-*` | — | — |
 | P7 | Tests E2E + cierre + limpieza | Feature nueva + cierre | Cloud | ⏳ PENDIENTE | `feature/p7-tests-cierre` | — | — |
 
 **Estados posibles:** `PENDIENTE` · `EN PROGRESO` · `BLOQUEADO` · `COMPLETADO`
@@ -947,9 +947,11 @@ Closes P5 in WHATSAPP_GATEWAY_PLAN.md"
 ### P6 — Admin Panel Multi-Tenant
 
 **Tipo:** 8.3 Feature nueva (10-12 pasos)
-**Branch:** `feature/p6-admin-multitenant`
+**Branch:** `cursor/p6-admin-multitenant-*` (encadenada desde P5)
 **Depende de:** P1, P2, P3, P4, P5
 **Bloquea a:** P7
+
+> **Estado 2026-04-30:** Implementado JWT + `/admin/v2/*` + panel por rol (baseline). Pendiente para próximo agente: wizard Meta completo (pasos OTP/2FA UI), editor visual de templates con preview avanzada, métricas/charts más ricos, CSV export auditoría. Ver `.agent-handoff.md` en la rama P6.
 
 #### Objetivo
 Refactorizar el admin panel actual (que usa un `ADMIN_SECRET` global) a un sistema multi-tenant con:

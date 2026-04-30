@@ -27,14 +27,16 @@ Aplicación React aparte (Vite + Tailwind + TanStack Query + Wouter + shadcn-sty
 ```bash
 cd admin
 cp .env.example .env
-# Editá VITE_GATEWAY_URL (URL pública del gateway) y dejá VITE_ADMIN_SECRET vacío (el secreto se ingresa en pantalla).
+# Editá VITE_GATEWAY_URL (URL pública del gateway).
 npm install
 npm run dev
 ```
 
-Abre `http://localhost:5173`, ingresá el **Admin Secret** (mismo que `ADMIN_SECRET` del gateway). El build de producción queda en `admin/dist/`.
+Abre `http://localhost:5173` e iniciá sesión con **email + contraseña** (`tenant_users`). El primer arranque del gateway puede crear un `super_admin` desde `SUPER_ADMIN_EMAIL` + `SUPER_ADMIN_PASSWORD_BOOTSTRAP` si la tabla está vacía.
 
-El gateway expone **CORS** (origen reflejado + cabeceras `X-Admin-Secret` / `X-Gateway-Key`) para que el panel pueda llamar al API desde el navegador.
+El gateway expone **CORS** (origen reflejado + cabeceras `Authorization`, `X-Admin-Secret` legacy, `X-Gateway-Key`) para que el panel pueda llamar al API desde el navegador.
+
+**Auth:** el panel usa `POST /auth/login` → JWT en `localStorage` y llama a `/admin/v2/*` con `Authorization: Bearer`. El header `X-Admin-Secret` sigue soportado en `/admin/*` y `/onboard/*` durante la transición.
 
 ## Registrar una nueva app
 
@@ -86,7 +88,11 @@ const data = (await res.json()) as { success?: boolean; messageId?: string; erro
 |----------|-------------|-------------|
 | `PORT` | No (default `3000`) | Puerto HTTP. |
 | `NODE_ENV` | No (default `development`) | `development` \| `production`, etc. |
-| `ADMIN_SECRET` | Sí | Secreto para header `X-Admin-Secret` en rutas `/admin/*`. |
+| `ADMIN_SECRET` | Sí | Secreto para header `X-Admin-Secret` (legacy) en rutas `/admin/*` y `/onboard/*`. |
+| `JWT_ACCESS_SECRET` | Sí | Firma de access tokens (admin panel). |
+| `JWT_REFRESH_SECRET` | Sí | Firma de refresh tokens. |
+| `SUPER_ADMIN_EMAIL` | No | Si no hay `super_admin` en DB, se crea en bootstrap con la password de abajo. |
+| `SUPER_ADMIN_PASSWORD_BOOTSTRAP` | No | Password inicial del super admin (cambiar tras primer login). |
 | `GATEWAY_ENCRYPTION_KEY` | Sí | 64 caracteres hex (32 bytes). Cifra `metaAccessToken` en SQLite (AES-256-GCM). |
 | `META_VERIFY_TOKEN` | Sí | Token de verificación del webhook (`GET /webhook`). |
 | `META_APP_SECRET` | No | App Secret de Meta para validar `x-hub-signature-256`. Si falta, se usa `GATEWAY_ENCRYPTION_KEY`. |
