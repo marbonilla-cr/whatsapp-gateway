@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { api, type TemplateRow } from '@/lib/api';
-import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -12,17 +11,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { TemplateList } from '@/components/templates/TemplateList';
+import { TemplateEditor } from '@/components/templates/TemplateEditor';
+import { TemplatePreview } from '@/components/templates/TemplatePreview';
+import { templateRowToVisual } from '@/components/templates/rowToVisual';
 
 export function Templates() {
   const { user } = useAuth();
@@ -34,38 +33,25 @@ export function Templates() {
     enabled: !!tenantId,
   });
   const [wabaId, setWabaId] = useState<string>('');
-  const selectedWaba = useMemo(() => wabaId || wabas[0]?.id || '', [wabaId, wabas]);
+  const selectedWaba = wabaId || wabas[0]?.id || '';
 
   const { data: tplRes, isLoading } = useQuery({
     queryKey: ['templates', tenantId, selectedWaba],
     queryFn: () => api.listTemplates(tenantId, selectedWaba),
     enabled: !!tenantId && !!selectedWaba,
+    refetchInterval: 30_000,
   });
   const templates = tplRes?.data ?? [];
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [jsonBody, setJsonBody] = useState(
-    JSON.stringify(
-      {
-        name: 'hello_world',
-        language: 'es',
-        category: 'UTILITY',
-        components: [{ type: 'BODY', text: 'Hola {{1}}, bienvenido.' }],
-      },
-      null,
-      2
-    )
-  );
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [viewRow, setViewRow] = useState<TemplateRow | null>(null);
 
   const createMut = useMutation({
-    mutationFn: () => {
-      const body = JSON.parse(jsonBody) as object;
-      return api.createTemplate(tenantId, selectedWaba, body);
-    },
+    mutationFn: (body: object) => api.createTemplate(tenantId, selectedWaba, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['templates', tenantId, selectedWaba] });
-      setCreateOpen(false);
-      toast.success('Template enviado a Meta');
+      setEditorOpen(false);
+      toast.success('Template enviado a Meta (estado pendiente hasta aprobación)');
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -79,116 +65,127 @@ export function Templates() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const { data: viewedStatus } = useQuery({
+    queryKey: ['template-status', tenantId, selectedWaba, viewRow?.name],
+    queryFn: () => api.getTemplateStatus(tenantId, selectedWaba, viewRow!.name),
+    enabled: !!viewRow && !!tenantId && !!selectedWaba,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      return s === 'PENDING' || s === 'IN_APPEAL' ? 30_000 : false;
+    },
+  });
+
+  const displayRow = viewedStatus ?? viewRow;
+  const [viewTab, setViewTab] = useState<'preview' | 'json'>('preview');
+
+  const closeView = useCallback(() => {
+    setViewRow(null);
+    setViewTab('preview');
+  }, []);
+
   return (
-    <div className="space-y-6">
+    <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Templates</h1>
-          <p className="text-sm text-muted-foreground">Lista y creación vía Cloud API (WABA)</p>
+          <p className="text-sm text-muted-foreground">Editor visual, vista previa estilo WhatsApp y sync con Meta</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <div className="space-y-2">
-            <Label>WABA</Label>
-            <Select value={selectedWaba} onValueChange={setWabaId}>
-              <SelectTrigger className="w-[280px]">
-                <SelectValue placeholder="Elegí WABA" />
-              </SelectTrigger>
-              <SelectContent>
-                {wabas.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    {w.metaWabaId} ({w.id})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button className="sm:mb-0.5" disabled={!selectedWaba} onClick={() => setCreateOpen(true)}>
-            Crear template
-          </Button>
+        <div className="space-y-2">
+          <Label>WABA</Label>
+          <Select value={selectedWaba} onValueChange={setWabaId}>
+            <SelectTrigger className="w-[280px]">
+              <SelectValue placeholder="Elegí WABA" />
+            </SelectTrigger>
+            <SelectContent>
+              {wabas.map((w) => (
+                <SelectItem key={w.id} value={w.id}>
+                  {w.metaWabaId} ({w.id})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      <div className="rounded-md border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Nombre</TableHead>
-              <TableHead>Idioma</TableHead>
-              <TableHead>Estado</TableHead>
-              <TableHead>Categoría</TableHead>
-              <TableHead className="text-right">Acciones</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
-                  Cargando…
-                </TableCell>
-              </TableRow>
-            ) : templates.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  Sin templates o sin WABA seleccionada.
-                </TableCell>
-              </TableRow>
-            ) : (
-              templates.map((t: TemplateRow) => (
-                <TableRow key={`${t.name}-${t.language}`}>
-                  <TableCell className="font-medium">{t.name}</TableCell>
-                  <TableCell>{t.language}</TableCell>
-                  <TableCell>
-                    <Badge variant={t.status === 'APPROVED' ? 'success' : 'secondary'}>{t.status}</Badge>
-                  </TableCell>
-                  <TableCell>{t.category}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => {
-                        if (confirm(`¿Eliminar template ${t.name}?`)) delMut.mutate(t.name);
-                      }}
-                    >
-                      Eliminar
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
+        <TemplateList
+          templates={templates}
+          loading={isLoading}
+          onNew={() => setEditorOpen(true)}
+          onView={(row) => setViewRow(row)}
+          onDelete={(name) => delMut.mutate(name)}
+        />
+        <div className="hidden rounded-lg border bg-card p-4 lg:block">
+          <p className="text-sm text-muted-foreground">
+            Elegí &quot;Nuevo template&quot; para abrir el editor, o &quot;Ver&quot; en la lista para previsualizar un
+            template existente.
+          </p>
+        </div>
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+        <DialogContent className="max-h-[95vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nuevo template</DialogTitle>
             <DialogDescription>
-              JSON según API de Meta (nombre, language, category, components). Revisá políticas de UTILITY/MARKETING.
+              Completá las secciones; la vista previa se actualiza en vivo. Al enviar, Meta revisará el template.
             </DialogDescription>
           </DialogHeader>
-          <Textarea className="min-h-[220px] font-mono text-xs" value={jsonBody} onChange={(e) => setJsonBody(e.target.value)} />
-          <DialogFooter>
-            <Button variant="outline" type="button" onClick={() => setCreateOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={createMut.isPending || !selectedWaba}
-              onClick={() => {
-                try {
-                  JSON.parse(jsonBody);
-                } catch {
-                  toast.error('JSON inválido');
-                  return;
-                }
-                createMut.mutate();
+          {!selectedWaba ? (
+            <p className="text-sm text-muted-foreground">Seleccioná una WABA primero.</p>
+          ) : (
+            <TemplateEditor
+              onCancel={() => setEditorOpen(false)}
+              onSubmitted={() => {}}
+              submitting={createMut.isPending}
+              onSubmitPayload={async (payload) => {
+                await createMut.mutateAsync(payload);
               }}
-            >
-              Enviar a Meta
-            </Button>
-          </DialogFooter>
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewRow} onOpenChange={(o) => !o && closeView()}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{displayRow?.name ?? 'Template'}</DialogTitle>
+            <DialogDescription>
+              Estado: {displayRow?.status ?? '—'}
+              {displayRow?.rejected_reason ? ` — ${displayRow.rejected_reason}` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {displayRow ? (
+            <div className="space-y-3">
+              <div className="flex gap-2 rounded-lg border p-1">
+                <button
+                  type="button"
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    viewTab === 'preview' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setViewTab('preview')}
+                >
+                  Vista previa
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    viewTab === 'json' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setViewTab('json')}
+                >
+                  JSON
+                </button>
+              </div>
+              {viewTab === 'preview' ? (
+                <TemplatePreview template={templateRowToVisual(displayRow)} />
+              ) : (
+                <pre className="max-h-[320px] overflow-auto rounded-md bg-muted p-3 text-xs">
+                  {JSON.stringify(displayRow, null, 2)}
+                </pre>
+              )}
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

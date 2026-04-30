@@ -82,7 +82,7 @@ El **WhatsApp Gateway** es la pieza de plumbing que conecta todas las apps verti
 | P3 | Webhook routing multi-bot + BullMQ | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p3-webhook-routing-k9m2-824d` | — | — |
 | P4 | REST API verticales + OpenAPI | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p4-rest-api-18ec-29a1` | #4 | `d46dc5196cbd1e0f602dd72b92d71dae57385070` |
 | P5 | Embedded Signup | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p5-embedded-signup-7297-d3e0` | #5 | `96b2886` |
-| P6 | Admin panel multi-tenant | Feature nueva (8.3) | Cloud | 🔄 BLOQUEADO (parcial — handoff) | `cursor/p6-admin-multitenant-*` | — | — |
+| P6 | Admin panel multi-tenant | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p6-5-wizard-templates-1da5` | (PR abierto en sesión) | — |
 | P7 | Tests E2E + cierre + limpieza | Feature nueva + cierre | Cloud | ⏳ PENDIENTE | `feature/p7-tests-cierre` | — | — |
 
 **Estados posibles:** `PENDIENTE` · `EN PROGRESO` · `BLOQUEADO` · `COMPLETADO`
@@ -951,7 +951,7 @@ Closes P5 in WHATSAPP_GATEWAY_PLAN.md"
 **Depende de:** P1, P2, P3, P4, P5
 **Bloquea a:** P7
 
-> **Estado 2026-04-30:** Implementado JWT + `/admin/v2/*` + panel por rol (baseline). Pendiente para próximo agente: wizard Meta completo (pasos OTP/2FA UI), editor visual de templates con preview avanzada, métricas/charts más ricos, CSV export auditoría. Ver `.agent-handoff.md` en la rama P6.
+> **Estado 2026-04-30:** P6 cerrado en rama `cursor/p6-5-wizard-templates-1da5`: wizard de provisioning con stepper, OTP/verify/registro/2FA/perfil Meta vía `/admin/v2/.../phones/...`, confirmación + app + mensaje de prueba; editor visual de templates con preview estilo WhatsApp, lista con filtro/búsqueda y sync 30s. Pendiente P7: E2E, charts dashboard, CSV auditoría, CRUD super usuarios.
 
 #### Objetivo
 Refactorizar el admin panel actual (que usa un `ADMIN_SECRET` global) a un sistema multi-tenant con:
@@ -1241,5 +1241,6 @@ El refactor se considera **completado** cuando:
 | 2026-04-30 | 1.0 | P3: routing por `phone_number_id`, `webhook_events` por change, forward async BullMQ, health Redis, tests routing/worker | Cursor Agent |
 | 2026-04-30 | 1.0 | P4: API /v1 con auth Bearer por app, endpoints messages/conversations/templates/media/contacts, OpenAPI + Scalar, tests multi-tenant | Cursor Agent |
 | 2026-04-30 | 1.0 | P5: Embedded Signup — `onboarding_sessions`, `/onboard/*`, refresh tokens job, `permission_revoked` webhook, admin UI, `docs/EMBEDDED_SIGNUP.md` | Cursor Cloud Agent |
+| 2026-04-30 | 1.0 | P6 / P6.5: wizard provisioning completo + endpoints phone `request-code`/`verify-code`/`register`/`two-step`/`profile`; editor templates visual + preview; tests `admin-v2-wabas-phones` | Cursor Cloud Agent |
 
 *Cada agente que actualice este plan debe agregar una fila aquí.*

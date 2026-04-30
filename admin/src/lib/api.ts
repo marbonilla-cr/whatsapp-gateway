@@ -107,6 +107,15 @@ export type WabaRow = {
   tokenExpiresAt: string | null;
 };
 
+export type PhoneNumberRow = {
+  id: string;
+  wabaId: string;
+  metaPhoneNumberId: string;
+  displayPhoneNumber: string;
+  displayName: string | null;
+  status: string;
+};
+
 export type TemplateRow = {
   name: string;
   language: string;
@@ -187,6 +196,61 @@ export const api = {
 
   listWabas: (tenantId: string) =>
     fetchWithAuth(`/admin/v2/tenants/${tenantId}/wabas`).then((r) => handleJson<WabaRow[]>(r)),
+
+  listWabaPhones: (tenantId: string, wabaId: string) =>
+    fetchWithAuth(`/admin/v2/tenants/${tenantId}/wabas/${encodeURIComponent(wabaId)}/phones`).then((r) =>
+      handleJson<PhoneNumberRow[]>(r)
+    ),
+
+  requestPhoneCode: (tenantId: string, wabaId: string, phoneRowId: string, codeMethod: 'SMS' | 'VOICE') =>
+    fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/wabas/${encodeURIComponent(wabaId)}/phones/${encodeURIComponent(phoneRowId)}/request-code`,
+      { method: 'POST', body: JSON.stringify({ code_method: codeMethod }) }
+    ).then(async (r) => {
+      if (r.status === 204) return;
+      await handleJson(r);
+    }),
+
+  verifyPhoneCode: (tenantId: string, wabaId: string, phoneRowId: string, code: string) =>
+    fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/wabas/${encodeURIComponent(wabaId)}/phones/${encodeURIComponent(phoneRowId)}/verify-code`,
+      { method: 'POST', body: JSON.stringify({ code }) }
+    ).then(async (r) => {
+      if (r.status === 204) return;
+      await handleJson(r);
+    }),
+
+  registerPhoneNumber: (tenantId: string, wabaId: string, phoneRowId: string, pin: string) =>
+    fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/wabas/${encodeURIComponent(wabaId)}/phones/${encodeURIComponent(phoneRowId)}/register`,
+      { method: 'POST', body: JSON.stringify({ pin }) }
+    ).then(async (r) => {
+      if (r.status === 204) return;
+      await handleJson(r);
+    }),
+
+  setTwoFAPin: (tenantId: string, wabaId: string, phoneRowId: string, pin: string) =>
+    fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/wabas/${encodeURIComponent(wabaId)}/phones/${encodeURIComponent(phoneRowId)}/two-step`,
+      { method: 'POST', body: JSON.stringify({ pin }) }
+    ).then(async (r) => {
+      if (r.status === 204) return;
+      await handleJson(r);
+    }),
+
+  updatePhoneProfileName: (tenantId: string, wabaId: string, phoneRowId: string, name: string) =>
+    fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/wabas/${encodeURIComponent(wabaId)}/phones/${encodeURIComponent(phoneRowId)}/profile`,
+      { method: 'PATCH', body: JSON.stringify({ name }) }
+    ).then(async (r) => {
+      if (r.status === 204) return;
+      await handleJson(r);
+    }),
+
+  getTemplateStatus: (tenantId: string, wabaId: string, name: string) =>
+    fetchWithAuth(
+      `/admin/v2/tenants/${tenantId}/templates/${encodeURIComponent(name)}?waba_id=${encodeURIComponent(wabaId)}`
+    ).then((r) => handleJson<TemplateRow>(r)),
 
   listTemplates: (tenantId: string, wabaId: string) =>
     fetchWithAuth(`/admin/v2/tenants/${tenantId}/templates?waba_id=${encodeURIComponent(wabaId)}`).then((r) =>
