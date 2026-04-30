@@ -2,7 +2,7 @@
 
 **Versión:** 1.0
 **Generado:** 2026-04-29
-**Última actualización:** 2026-04-29
+**Última actualización:** 2026-04-30
 **Estado global:** PLANIFICACIÓN
 
 ---
@@ -78,7 +78,7 @@ El **WhatsApp Gateway** es la pieza de plumbing que conecta todas las apps verti
 |---|---|---|---|---|---|---|---|
 | P0 | Análisis del repo | Diagnóstico | Local | ✅ COMPLETADO | `main` | — | — |
 | P1 | Schema multi-tenant + migración a Postgres | Refactor estructural (8.4) | Cloud | ✅ COMPLETADO | `cursor/p1-schema-multitenant-ac7b` | #1 | `b750b75` |
-| P2 | Servicios Meta API ampliados | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p2-meta-services` | — | — |
+| P2 | Servicios Meta API ampliados | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p2-meta-services-31c6` | — | — |
 | P3 | Webhook routing multi-bot + BullMQ | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p3-webhook-routing` | — | — |
 | P4 | REST API verticales + OpenAPI | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p4-rest-api` | — | — |
 | P5 | Embedded Signup | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p5-embedded-signup` | — | — |
@@ -1235,6 +1235,7 @@ El refactor se considera **completado** cuando:
 |---|---|---|---|
 | 2026-04-29 | 1.0 | Creación inicial del plan basado en P0 | Claude (Anthropic) + Marcelo |
 | 2026-04-30 | 1.0 | P1: Postgres multi-tenant, PGlite tests, `drizzle:check`, PR #1 | Cursor Agent |
+| 2026-04-30 | 1.0 | P2: nuevo `MetaApiClient` (Graph v22), retry/rate-limit, tests unitarios + integración opcional | Cursor Agent |
 | | | | |
 
 *Cada agente que actualice este plan debe agregar una fila aquí.*

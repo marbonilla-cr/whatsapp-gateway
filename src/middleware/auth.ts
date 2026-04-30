@@ -18,6 +18,7 @@ export function createGatewayAuthMiddleware(getDb: () => AppDb) {
     const rows = await db
       .select({
         app: apps,
+        wabaId: wabas.id,
         metaPhoneNumberId: phoneNumbers.metaPhoneNumberId,
         accessTokenEncrypted: wabas.accessTokenEncrypted,
       })
@@ -36,6 +37,7 @@ export function createGatewayAuthMiddleware(getDb: () => AppDb) {
     }
     req.gatewayApp = {
       ...row.app,
+      wabaId: row.wabaId,
       metaPhoneNumberId: row.metaPhoneNumberId,
       accessTokenEncrypted: row.accessTokenEncrypted,
     };
