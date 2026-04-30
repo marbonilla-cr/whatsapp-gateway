@@ -1,11 +1,9 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
-import { getDb } from './db';
+import { initDb, getDb } from './db';
 import { createAdminAuthMiddleware } from './middleware/adminAuth';
 import { createGatewayAuthMiddleware } from './middleware/auth';
 import { createAdminRouter } from './routes/admin';
@@ -38,18 +36,7 @@ function validateEnv(): void {
   }
 }
 
-function ensureDataDirFromDatabaseUrl(databaseUrl: string): void {
-  if (databaseUrl === ':memory:') {
-    return;
-  }
-  const resolved = path.resolve(databaseUrl);
-  const dir = path.dirname(resolved);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-export function buildApp() {
+export async function buildApp() {
   validateEnv();
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   process.env.NODE_ENV = nodeEnv;
@@ -61,8 +48,7 @@ export function buildApp() {
   const logLevel = process.env.LOG_LEVEL!;
   const metaWebhookHmacSecret = process.env.META_APP_SECRET ?? encryptionKey;
 
-  ensureDataDirFromDatabaseUrl(databaseUrl);
-  getDb(databaseUrl);
+  await initDb(databaseUrl);
 
   const logger = pino({
     level: logLevel,
@@ -95,7 +81,6 @@ export function buildApp() {
     })
   );
 
-  // Raw body for Meta HMAC: `verify` runs on the raw buffer before JSON parse (spec: capture before parse).
   app.use(
     express.json({
       limit: '1mb',
@@ -124,23 +109,12 @@ export function buildApp() {
   app.use(globalLimiter);
 
   const adminAuth = createAdminAuthMiddleware(adminSecret);
-  const gatewayAuth = createGatewayAuthMiddleware(() => getDb(databaseUrl));
+  const gatewayAuth = createGatewayAuthMiddleware(() => getDb());
 
-  app.use(
-    '/webhook',
-    createWebhookRouter(
-      () => getDb(databaseUrl),
-      metaVerifyToken,
-      metaWebhookHmacSecret,
-      logger
-    )
-  );
-  app.use(
-    '/send',
-    createSendRouter(() => getDb(databaseUrl), encryptionKey, gatewayAuth)
-  );
-  app.use('/health', createHealthRouter(() => getDb(databaseUrl)));
-  app.use('/admin', createAdminRouter(() => getDb(databaseUrl), encryptionKey, adminAuth));
+  app.use('/webhook', createWebhookRouter(() => getDb(), metaVerifyToken, metaWebhookHmacSecret, logger));
+  app.use('/send', createSendRouter(() => getDb(), encryptionKey, gatewayAuth));
+  app.use('/health', createHealthRouter(() => getDb()));
+  app.use('/admin', createAdminRouter(() => getDb(), encryptionKey, adminAuth));
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({
@@ -160,8 +134,9 @@ export function buildApp() {
 }
 
 if (require.main === module) {
-  const { app, port, logger } = buildApp();
-  app.listen(port, () => {
-    logger.info({ port }, 'WhatsApp Gateway listening');
+  void buildApp().then(({ app, port, logger }) => {
+    app.listen(port, () => {
+      logger.info({ port }, 'WhatsApp Gateway listening');
+    });
   });
 }
