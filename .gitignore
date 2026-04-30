@@ -8,3 +8,13 @@ data/*.db-*
 :memory:
 
 **/.DS_Store
+
+.agent-handoff.md
+
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# Project planning artifacts (kept locally for reference)
+WHATSAPP_GATEWAY_PLAN.md
+WHATSAPP_GATEWAY_ANALISIS.md

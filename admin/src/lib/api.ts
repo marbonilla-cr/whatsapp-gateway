@@ -1,6 +1,16 @@
 import { getAccessToken, refreshAccessToken, clearSession } from './auth';
 
-const BASE = import.meta.env.VITE_GATEWAY_URL ?? '';
+/** Prefer `VITE_GATEWAY_URL`; when the admin SPA is served from the gateway (`npm run build`), use same origin. */
+function gatewayBaseUrl(): string {
+  const env = (import.meta.env.VITE_GATEWAY_URL as string | undefined)?.trim();
+  if (env) return env.replace(/\/$/, '');
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return '';
+}
+
+const BASE = gatewayBaseUrl();
 
 async function fetchWithAuth(path: string, init: RequestInit = {}, retried = false): Promise<Response> {
   const token = getAccessToken();
@@ -288,5 +298,5 @@ export const api = {
 };
 
 export function getGatewayBase(): string {
-  return BASE;
+  return gatewayBaseUrl();
 }

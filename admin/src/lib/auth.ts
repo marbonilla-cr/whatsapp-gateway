@@ -10,7 +10,12 @@ export type AuthUser = {
 };
 
 function gatewayBase(): string {
-  return (import.meta.env.VITE_GATEWAY_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+  const env = (import.meta.env.VITE_GATEWAY_URL as string | undefined)?.trim();
+  if (env) return env.replace(/\/$/, '');
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return '';
 }
 
 export function getAccessToken(): string | null {

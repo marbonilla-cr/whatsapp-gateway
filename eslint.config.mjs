@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['dist/**', 'node_modules/**', 'drizzle/**'],
+    ignores: ['dist/**', 'node_modules/**', 'drizzle/**', 'e2e/**', 'playwright.config.ts', 'playwright-report/**', 'test-results/**'],
   },
   {
     rules: {
