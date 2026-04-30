@@ -1,9 +1,8 @@
 import { Router, type Request, type Response } from 'express';
-import { eq, and } from 'drizzle-orm';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { and, eq } from 'drizzle-orm';
+import type { AppDb } from '../db';
 import type { Logger } from 'pino';
-import type * as schema from '../db/schema';
-import { apps, messageLogs } from '../db/schema';
+import { apps, messages, phoneNumbers, webhookEvents } from '../db/schema';
 import type { AppRow } from '../types';
 import { randomId16, validateMetaSignature } from '../services/crypto';
 import { forwardToApp } from '../services/router';
@@ -55,7 +54,6 @@ type MetaWebhookChange = {
   rawPayload: string | null;
 };
 
-/** Un evento lógico = cada `change` de Meta; si no hay estructura estándar, un único evento con el body completo. */
 function extractMetaChanges(payload: unknown): MetaWebhookChange[] {
   const out: MetaWebhookChange[] = [];
   if (!payload || typeof payload !== 'object') {
@@ -157,10 +155,32 @@ function metaMessageIdFromValue(value: unknown): string | undefined {
   return undefined;
 }
 
+function parseJsonb(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : { value: v };
+  } catch {
+    return { _unparsed: raw };
+  }
+}
+
+async function loadAppByMetaPhoneNumberId(
+  db: AppDb,
+  metaPhoneNumberId: string
+): Promise<AppRow | undefined> {
+  const rows = await db
+    .select({ app: apps })
+    .from(apps)
+    .innerJoin(phoneNumbers, eq(apps.phoneNumberId, phoneNumbers.id))
+    .where(and(eq(phoneNumbers.metaPhoneNumberId, metaPhoneNumberId), eq(apps.isActive, true)))
+    .limit(1);
+  return rows[0]?.app;
+}
+
 export function createWebhookRouter(
-  getDb: () => BetterSQLite3Database<typeof schema>,
+  getDb: () => AppDb,
   metaVerifyToken: string,
-  /** HMAC secret for `x-hub-signature-256` (typically Meta App Secret, or GATEWAY_ENCRYPTION_KEY per spec). */
   hmacSecret: string,
   log: Logger
 ) {
@@ -178,7 +198,7 @@ export function createWebhookRouter(
     });
   });
 
-  r.post('/', (req: Request, res: Response) => {
+  r.post('/', async (req: Request, res: Response) => {
     log.info({ headers: req.headers, body: req.body }, 'webhook received');
 
     const signature = req.header('x-hub-signature-256');
@@ -240,13 +260,7 @@ export function createWebhookRouter(
 
     let appForForward: AppRow | undefined;
     if (phoneNumberId) {
-      const rows = db
-        .select()
-        .from(apps)
-        .where(and(eq(apps.phoneNumberId, phoneNumberId), eq(apps.isActive, true)))
-        .limit(1)
-        .all();
-      appForForward = rows[0];
+      appForForward = await loadAppByMetaPhoneNumberId(db, phoneNumberId);
     }
 
     if (signatureValid && appForForward) {
@@ -265,45 +279,66 @@ export function createWebhookRouter(
       }
     }
 
-    const resolveAppIdForPhone = (pid: string | undefined): string => {
-      if (!pid) return UNKNOWN_APP_ID;
-      const rows = db
-        .select()
-        .from(apps)
-        .where(and(eq(apps.phoneNumberId, pid), eq(apps.isActive, true)))
-        .limit(1)
-        .all();
-      return rows[0]?.id ?? UNKNOWN_APP_ID;
-    };
-
     const changes = extractMetaChanges(payload);
-    const now = new Date().toISOString();
+    const now = new Date();
+
+    try {
+      await db.insert(webhookEvents).values({
+        id: randomId16(),
+        wabaId: null,
+        phoneNumberId: null,
+        eventType: 'META_WEBHOOK_POST',
+        rawPayload: (typeof payload === 'object' && payload !== null
+          ? (payload as Record<string, unknown>)
+          : { body: payload }) as Record<string, unknown>,
+        signatureValid,
+        processed: false,
+        createdAt: now,
+      });
+    } catch (err) {
+      log.error({ err }, 'failed to insert webhook_events');
+    }
+
+    const unknownTenantRows = await db
+      .select({ tenantId: apps.tenantId })
+      .from(apps)
+      .where(eq(apps.id, UNKNOWN_APP_ID))
+      .limit(1);
+    const unknownTenantId = unknownTenantRows[0]?.tenantId;
 
     for (const change of changes) {
       const pid = extractPhoneFromWaValue(change.value);
-      const appId = resolveAppIdForPhone(pid);
+      const appRow = pid ? await loadAppByMetaPhoneNumberId(db, pid) : undefined;
+      const appId = appRow?.id ?? UNKNOWN_APP_ID;
+      const tenantId = appRow?.tenantId ?? unknownTenantId;
       const { from: fromNumber, to: toNumber } = inferNumbersFromValue(change.value);
       const messageType = change.field ?? 'webhook';
       const bodyPreview = bodyPreviewForChange(change.field, change.value);
       const metaMessageId = metaMessageIdFromValue(change.value);
+      const rawObj = parseJsonb(change.rawPayload);
       try {
-        db.insert(messageLogs)
-          .values({
-            id: randomId16(),
-            appId,
-            direction: 'IN',
-            fromNumber,
-            toNumber,
-            messageType,
-            bodyPreview,
-            metaMessageId,
-            rawPayload: change.rawPayload,
-            status: 'sent',
-            createdAt: now,
-          })
-          .run();
+        if (!tenantId) {
+          log.error({ appId }, 'missing tenant for message insert');
+          continue;
+        }
+        await db.insert(messages).values({
+          id: randomId16(),
+          appId,
+          tenantId,
+          direction: 'IN',
+          fromNumber,
+          toNumber,
+          messageType,
+          bodyPreview,
+          rawPayload: rawObj,
+          metaMessageId: metaMessageId ?? null,
+          status: 'sent',
+          errorCode: null,
+          errorMessage: null,
+          createdAt: now,
+        });
       } catch (err) {
-        log.error({ err, appId }, 'failed to insert message log');
+        log.error({ err, appId }, 'failed to insert message');
       }
     }
 

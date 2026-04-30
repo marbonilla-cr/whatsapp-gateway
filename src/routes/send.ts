@@ -1,8 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import type * as schema from '../db/schema';
-import { messageLogs } from '../db/schema';
+import type { AppDb } from '../db';
+import { messages } from '../db/schema';
 import { decryptToken, randomId16 } from '../services/crypto';
 import { sendMessage } from '../services/meta';
 import type { MetaMessagePayload } from '../types';
@@ -77,7 +76,7 @@ function bodyPreviewFromSend(parsed: z.infer<typeof sendBody>): string | undefin
 }
 
 export function createSendRouter(
-  getDb: () => BetterSQLite3Database<typeof schema>,
+  getDb: () => AppDb,
   encryptionKey: string,
   gatewayAuth: (req: Request, res: Response, next: NextFunction) => void
 ) {
@@ -106,7 +105,7 @@ export function createSendRouter(
     }
     let accessToken: string;
     try {
-      accessToken = decryptToken(app.metaAccessToken, encryptionKey);
+      accessToken = decryptToken(app.accessTokenEncrypted, encryptionKey);
     } catch {
       res.status(500).json({
         error: {
@@ -119,7 +118,7 @@ export function createSendRouter(
     const metaPayload = buildMetaPayload(parsed.data);
     let messageId: string;
     try {
-      const out = await sendMessage(app.phoneNumberId, accessToken, metaPayload);
+      const out = await sendMessage(app.metaPhoneNumberId, accessToken, metaPayload);
       messageId = out.messageId;
     } catch (e) {
       if (e instanceof MetaApiError) {
@@ -140,24 +139,25 @@ export function createSendRouter(
       return;
     }
     const db = getDb();
-    const now = new Date().toISOString();
     try {
-      db.insert(messageLogs)
-        .values({
-          id: randomId16(),
-          appId: app.id,
-          direction: 'OUT',
-          fromNumber: app.phoneNumberId,
-          toNumber: parsed.data.to,
-          messageType: parsed.data.type,
-          bodyPreview: bodyPreviewFromSend(parsed.data),
-          metaMessageId: messageId,
-          status: 'sent',
-          createdAt: now,
-        })
-        .run();
+      await db.insert(messages).values({
+        id: randomId16(),
+        appId: app.id,
+        tenantId: app.tenantId,
+        direction: 'OUT',
+        fromNumber: app.metaPhoneNumberId,
+        toNumber: parsed.data.to,
+        messageType: parsed.data.type,
+        bodyPreview: bodyPreviewFromSend(parsed.data),
+        rawPayload: null,
+        metaMessageId: messageId,
+        status: 'sent',
+        errorCode: null,
+        errorMessage: null,
+        createdAt: new Date(),
+      });
     } catch {
-      // still return success to client — log is best-effort
+      // best-effort log
     }
     res.status(200).json({ success: true, messageId });
   });

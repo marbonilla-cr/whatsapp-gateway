@@ -4,6 +4,9 @@ import { MetaApiError } from '../types';
 export const META_API_VERSION = 'v19.0';
 const META_GRAPH_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
 
+/**
+ * @param phoneNumberId Meta Graph phone-number-id (not internal DB id).
+ */
 export async function sendMessage(
   phoneNumberId: string,
   accessToken: string,
