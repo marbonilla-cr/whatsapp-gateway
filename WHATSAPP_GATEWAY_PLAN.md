@@ -80,7 +80,7 @@ El **WhatsApp Gateway** es la pieza de plumbing que conecta todas las apps verti
 | P1 | Schema multi-tenant + migración a Postgres | Refactor estructural (8.4) | Cloud | ✅ COMPLETADO | `cursor/p1-schema-multitenant-ac7b` | #1 | `b750b75` |
 | P2 | Servicios Meta API ampliados | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p2-meta-services-31c6` | #2 | `9a9becc` |
 | P3 | Webhook routing multi-bot + BullMQ | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p3-webhook-routing-k9m2-824d` | — | — |
-| P4 | REST API verticales + OpenAPI | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p4-rest-api-18ec-29a1` | #4 | `pending` |
+| P4 | REST API verticales + OpenAPI | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p4-rest-api-18ec-29a1` | #4 | `d46dc5196cbd1e0f602dd72b92d71dae57385070` |
 | P5 | Embedded Signup | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p5-embedded-signup` | — | — |
 | P6 | Admin panel multi-tenant | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p6-admin-multitenant` | — | — |
 | P7 | Tests E2E + cierre + limpieza | Feature nueva + cierre | Cloud | ⏳ PENDIENTE | `feature/p7-tests-cierre` | — | — |
