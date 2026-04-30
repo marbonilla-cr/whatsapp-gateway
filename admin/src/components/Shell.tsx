@@ -1,5 +1,5 @@
 import { Link, useLocation, useRoute } from 'wouter';
-import { LogOut, LayoutGrid, ScrollText, Stethoscope } from 'lucide-react';
+import { LogOut, LayoutGrid, ScrollText, Stethoscope, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -43,6 +43,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <NavLink href="/diagnostics">
             <Stethoscope className="h-4 w-4 shrink-0" />
             Diagnóstico
+          </NavLink>
+          <NavLink href="/onboard">
+            <Link2 className="h-4 w-4 shrink-0" />
+            WhatsApp signup
           </NavLink>
         </nav>
       </aside>

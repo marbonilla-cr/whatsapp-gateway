@@ -51,6 +51,7 @@ async function ensureDiagnosticUnknownApp(db: AppDb): Promise<void> {
       tokenExpiresAt: null,
       webhookSubscribedAt: null,
       status: 'active',
+      errorMessage: null,
       createdAt: now,
       updatedAt: now,
     })

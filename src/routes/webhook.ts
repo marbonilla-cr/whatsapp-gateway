@@ -2,9 +2,10 @@ import { Router, type Request, type Response } from 'express';
 import { and, eq } from 'drizzle-orm';
 import type { AppDb } from '../db';
 import type { Logger } from 'pino';
-import { apps, messages, phoneNumbers, webhookEvents } from '../db/schema';
+import { apps, auditLog, messages, phoneNumbers, tenantUsers, wabas, webhookEvents } from '../db/schema';
 import { randomId16, validateMetaSignature } from '../services/crypto';
 import { enqueueForward } from '../queue';
+import { sendEmail } from '../services/notifications';
 
 const UNKNOWN_APP_ID = 'unknown';
 
@@ -37,6 +38,8 @@ type MetaWebhookChange = {
   field?: string;
   value?: unknown;
   rawPayload: string | null;
+  /** WhatsApp Business Account id from webhook `entry[].id` when present. */
+  entryWabaId?: string;
 };
 
 function extractMetaChanges(payload: unknown): MetaWebhookChange[] {
@@ -52,8 +55,19 @@ function extractMetaChanges(payload: unknown): MetaWebhookChange[] {
   }
   for (const ent of p.entry) {
     if (!ent || typeof ent !== 'object') continue;
+    const entryId = (ent as { id?: string }).id;
+    const entryWabaId = typeof entryId === 'string' && entryId.length > 0 ? entryId : undefined;
     const changes = (ent as { changes?: unknown[] }).changes;
     if (!Array.isArray(changes)) continue;
+    if (changes.length === 0 && entryWabaId) {
+      out.push({
+        field: undefined,
+        value: ent,
+        rawPayload: safeJsonStringify(ent),
+        entryWabaId,
+      });
+      continue;
+    }
     for (const ch of changes) {
       if (!ch || typeof ch !== 'object') continue;
       const c = ch as { field?: string; value?: unknown };
@@ -61,6 +75,7 @@ function extractMetaChanges(payload: unknown): MetaWebhookChange[] {
         field: typeof c.field === 'string' ? c.field : undefined,
         value: c.value,
         rawPayload: safeJsonStringify(ch),
+        entryWabaId,
       });
     }
   }
@@ -162,6 +177,83 @@ function changeToRecord(change: MetaWebhookChange): Record<string, unknown> {
     }
   }
   return base;
+}
+
+function isPermissionRevokeField(field: string | undefined): boolean {
+  if (!field) return false;
+  const f = field.toLowerCase();
+  return f === 'account_review_update' || f === 'permission_revoked';
+}
+
+function extractMetaWabaIdFromChange(change: MetaWebhookChange): string | undefined {
+  if (change.entryWabaId) return change.entryWabaId;
+  const v = change.value;
+  if (!v || typeof v !== 'object') return undefined;
+  const w = (v as { waba_id?: string; wabaId?: string }).waba_id ?? (v as { wabaId?: string }).wabaId;
+  return typeof w === 'string' && w.length > 0 ? w : undefined;
+}
+
+async function tryHandlePermissionRevoked(
+  db: AppDb,
+  change: MetaWebhookChange,
+  log: Logger,
+  now: Date
+): Promise<void> {
+  if (!isPermissionRevokeField(change.field)) {
+    return;
+  }
+  const metaWabaId = extractMetaWabaIdFromChange(change);
+  if (!metaWabaId) {
+    log.warn({ field: change.field }, 'permission webhook: could not resolve waba id');
+    return;
+  }
+
+  const rows = await db.select().from(wabas).where(eq(wabas.metaWabaId, metaWabaId)).limit(1);
+  const wabaRow = rows[0];
+  if (!wabaRow) {
+    log.warn({ metaWabaId }, 'permission webhook: unknown WABA');
+    return;
+  }
+
+  await db
+    .update(wabas)
+    .set({ status: 'revoked', updatedAt: now, errorMessage: `permission_revoked:${change.field ?? ''}` })
+    .where(eq(wabas.id, wabaRow.id));
+
+  await db.insert(auditLog).values({
+    id: randomId16(),
+    tenantId: wabaRow.tenantId,
+    actorUserId: null,
+    action: 'waba_permission_revoked',
+    targetType: 'waba',
+    targetId: wabaRow.id,
+    diffJson: { field: change.field, metaWabaId } as unknown as Record<string, unknown>,
+    ipAddress: null,
+    userAgent: null,
+    createdAt: now,
+  });
+
+  const admins = await db
+    .select({ email: tenantUsers.email })
+    .from(tenantUsers)
+    .where(
+      and(
+        eq(tenantUsers.tenantId, wabaRow.tenantId),
+        eq(tenantUsers.role, 'tenant_admin'),
+        eq(tenantUsers.isActive, true)
+      )
+    );
+
+  const subject = `[WhatsApp Gateway] WABA access revoked (${metaWabaId})`;
+  const body = `Your WhatsApp Business Account connection was revoked or restricted (field: ${change.field ?? 'unknown'}).\nMeta WABA id: ${metaWabaId}\nInternal id: ${wabaRow.id}`;
+
+  const alertTo = process.env.ALERT_EMAIL_TO?.trim();
+  if (alertTo) {
+    await sendEmail(alertTo, subject, body, log);
+  }
+  for (const a of admins) {
+    await sendEmail(a.email, subject, body, log);
+  }
 }
 
 async function resolveAppByMetaPhoneNumberId(
@@ -278,6 +370,12 @@ export function createWebhookRouter(
     const unknownTenantId = unknownTenantRows[0]?.tenantId;
 
     for (const change of changes) {
+      try {
+        await tryHandlePermissionRevoked(db, change, log, now);
+      } catch (err) {
+        log.error({ err }, 'permission_revoked handler failed');
+      }
+
       const metaPid = extractPhoneFromWaValue(change.value);
       let wabaId: string | null = null;
       let phoneNumberFk: string | null = null;

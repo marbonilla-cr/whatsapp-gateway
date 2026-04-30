@@ -94,11 +94,19 @@ export class MetaApiClient {
   constructor(
     private readonly wabaId: string,
     private readonly accessToken: string,
-    logger?: LoggerLike
+    logger?: LoggerLike,
+    private readonly onInvalidAccessToken?: () => Promise<void>
   ) {
     this.logger = logger ?? pino({ level: 'silent' });
     const parsed = Number(process.env.META_API_MIN_INTERVAL_MS ?? '100');
     this.minIntervalMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : 100;
+  }
+
+  /** Meta OAuth / session errors that indicate the WABA token is no longer valid. */
+  private shouldTreatAsRevokedToken(code?: number): boolean {
+    if (code === undefined) return false;
+    // 190 = OAuthException invalid/expired session; 102 = API session / login status
+    return code === 190 || code === 102;
   }
 
   private async waitForRateLimit(): Promise<void> {
@@ -107,6 +115,38 @@ export class MetaApiClient {
       await sleep(this.nextRequestAtMs - now);
     }
     this.nextRequestAtMs = Date.now() + this.minIntervalMs;
+  }
+
+  /**
+   * Graph calls that use app id/secret in query (OAuth) must not send a user/WABA Bearer token.
+   */
+  private async oauthAppSecretRequest<T = Record<string, unknown>>(
+    path: string,
+    query: RequestOptions['query']
+  ): Promise<T> {
+    const url = `${META_GRAPH_BASE}/${path}${buildQuery(query)}`;
+    const res = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    if (!res.ok) {
+      const metaError = parseMetaError(body);
+      const errMessage =
+        metaError?.message ??
+        (body && typeof body === 'object' ? `Meta API error (${res.status})` : `Meta API non-json (${res.status})`);
+      throw new MetaApiError(
+        errMessage,
+        res.status,
+        body,
+        metaError?.code,
+        metaError?.error_subcode,
+        metaError?.fbtrace_id
+      );
+    }
+    return (body ?? {}) as T;
   }
 
   private async request<T = Record<string, unknown>>(
@@ -163,6 +203,14 @@ export class MetaApiClient {
           );
           await sleep(delayMs);
           continue;
+        }
+
+        if (res.status === 401 && this.shouldTreatAsRevokedToken(err.code)) {
+          try {
+            await this.onInvalidAccessToken?.();
+          } catch (hookErr) {
+            this.logger.warn({ hookErr }, 'onInvalidAccessToken hook failed');
+          }
         }
 
         this.logger.error(
@@ -377,13 +425,11 @@ export class MetaApiClient {
       throw new MetaApiError('META_APP_ID and META_APP_SECRET are required', 500, null);
     }
 
-    const body = await this.request<Record<string, unknown>>('GET', 'oauth/access_token', {
-      query: {
-        client_id: appId,
-        client_secret: appSecret,
-        redirect_uri: redirectUri,
-        code,
-      },
+    const body = await this.oauthAppSecretRequest<Record<string, unknown>>('oauth/access_token', {
+      client_id: appId,
+      client_secret: appSecret,
+      redirect_uri: redirectUri,
+      code,
     });
     return parseTokenResponse(body);
   }
@@ -398,13 +444,11 @@ export class MetaApiClient {
       throw new MetaApiError('META_APP_ID and META_APP_SECRET are required', 500, null);
     }
 
-    const body = await this.request<Record<string, unknown>>('GET', 'oauth/access_token', {
-      query: {
-        grant_type: 'fb_exchange_token',
-        client_id: appId,
-        client_secret: appSecret,
-        fb_exchange_token: currentToken,
-      },
+    const body = await this.oauthAppSecretRequest<Record<string, unknown>>('oauth/access_token', {
+      grant_type: 'fb_exchange_token',
+      client_id: appId,
+      client_secret: appSecret,
+      fb_exchange_token: currentToken,
     });
     return parseTokenResponse(body);
   }
@@ -435,6 +479,7 @@ export async function getMetaApiClient(options: {
     await options.db
       .select({
         id: wabas.id,
+        metaWabaId: wabas.metaWabaId,
         accessTokenEncrypted: wabas.accessTokenEncrypted,
       })
       .from(wabas)
@@ -453,5 +498,14 @@ export async function getMetaApiClient(options: {
     throw new MetaApiError('Failed to decrypt Meta access token', 500, null);
   }
 
-  return new MetaApiClient(row.id, token, options.logger);
+  const internalId = row.id;
+  const onInvalid = async (): Promise<void> => {
+    await options.db
+      .update(wabas)
+      .set({ status: 'revoked', updatedAt: new Date(), errorMessage: 'Meta returned 401 invalid session' })
+      .where(eq(wabas.id, internalId));
+  };
+
+  /** Graph paths use Meta WABA id, not internal PK. */
+  return new MetaApiClient(row.metaWabaId, token, options.logger, onInvalid);
 }

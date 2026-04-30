@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { and, eq } from 'drizzle-orm';
 import { buildApp } from '../server';
 import { getDb } from '../db';
-import { apps, phoneNumbers, tenants, wabas } from '../db/schema';
+import { tenants } from '../db/schema';
 import { setupTestPgMem, teardownTestPgMem } from './test-db';
 import { createTestApp } from './fixtures';
 
@@ -173,39 +172,20 @@ describe('v1 templates endpoints', () => {
       tenantId: 'tenant_other_test',
     });
 
-    const wabaA = (
-      await db
-        .select({ wabaId: wabas.id })
-        .from(apps)
-        .innerJoin(phoneNumbers, eq(apps.phoneNumberId, phoneNumbers.id))
-        .innerJoin(wabas, eq(phoneNumbers.wabaId, wabas.id))
-        .where(eq(apps.id, 'app-v1-templates-a'))
-        .limit(1)
-    )[0]?.wabaId;
-    const wabaB = (
-      await db
-        .select({ wabaId: wabas.id })
-        .from(apps)
-        .innerJoin(phoneNumbers, eq(apps.phoneNumberId, phoneNumbers.id))
-        .innerJoin(wabas, eq(phoneNumbers.wabaId, wabas.id))
-        .where(eq(apps.id, 'app-v1-templates-b'))
-        .limit(1)
-    )[0]?.wabaId;
-
-    expect(wabaA).toBeDefined();
-    expect(wabaB).toBeDefined();
+    const metaWabaA = 'waba-template-a';
+    const metaWabaB = 'waba-template-b';
 
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        if (url.includes(`/${wabaA}/message_templates`)) {
+        if (url.includes(`/${metaWabaA}/message_templates`)) {
           return Promise.resolve({
             ok: true,
             status: 200,
             json: async () => ({ data: [{ name: 'tenant_a_only', language: 'es', status: 'APPROVED' }] }),
           } as Response);
         }
-        if (url.includes(`/${wabaB}/message_templates`)) {
+        if (url.includes(`/${metaWabaB}/message_templates`)) {
           return Promise.resolve({
             ok: true,
             status: 200,

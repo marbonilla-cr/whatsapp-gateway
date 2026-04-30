@@ -81,7 +81,7 @@ El **WhatsApp Gateway** es la pieza de plumbing que conecta todas las apps verti
 | P2 | Servicios Meta API ampliados | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p2-meta-services-31c6` | #2 | `9a9becc` |
 | P3 | Webhook routing multi-bot + BullMQ | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p3-webhook-routing-k9m2-824d` | — | — |
 | P4 | REST API verticales + OpenAPI | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p4-rest-api-18ec-29a1` | #4 | `d46dc5196cbd1e0f602dd72b92d71dae57385070` |
-| P5 | Embedded Signup | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p5-embedded-signup` | — | — |
+| P5 | Embedded Signup | Feature nueva (8.3) | Cloud | ✅ COMPLETADO | `cursor/p5-embedded-signup-7297-d3e0` | (PR abierto por agente) | `7b38a9b` |
 | P6 | Admin panel multi-tenant | Feature nueva (8.3) | Cloud | ⏳ PENDIENTE | `feature/p6-admin-multitenant` | — | — |
 | P7 | Tests E2E + cierre + limpieza | Feature nueva + cierre | Cloud | ⏳ PENDIENTE | `feature/p7-tests-cierre` | — | — |
 
@@ -1238,6 +1238,6 @@ El refactor se considera **completado** cuando:
 | 2026-04-30 | 1.0 | P2: nuevo `MetaApiClient` (Graph v22), retry/rate-limit, tests unitarios + integración opcional | Cursor Agent |
 | 2026-04-30 | 1.0 | P3: routing por `phone_number_id`, `webhook_events` por change, forward async BullMQ, health Redis, tests routing/worker | Cursor Agent |
 | 2026-04-30 | 1.0 | P4: API /v1 con auth Bearer por app, endpoints messages/conversations/templates/media/contacts, OpenAPI + Scalar, tests multi-tenant | Cursor Agent |
-| | | | |
+| 2026-04-30 | 1.0 | P5: Embedded Signup — `onboarding_sessions`, `/onboard/*`, refresh tokens job, `permission_revoked` webhook, admin UI, `docs/EMBEDDED_SIGNUP.md` | Cursor Cloud Agent |
 
 *Cada agente que actualice este plan debe agregar una fila aquí.*

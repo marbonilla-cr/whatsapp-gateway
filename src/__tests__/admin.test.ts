@@ -109,7 +109,7 @@ describe('GET /admin/logs', () => {
   it('requires X-Admin-Secret and returns last message_logs', async () => {
     const { app } = await buildApp();
     const forbidden = await request(app).get('/admin/logs');
-    expect(forbidden.status).toBe(403);
+    expect(forbidden.status).toBe(401);
 
     const ok = await request(app).get('/admin/logs').set('X-Admin-Secret', ADMIN);
     expect(ok.status).toBe(200);

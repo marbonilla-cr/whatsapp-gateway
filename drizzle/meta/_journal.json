@@ -8,6 +8,13 @@
       "when": 1777507758075,
       "tag": "0000_nervous_wild_child",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777524269182,
+      "tag": "0001_giant_nightmare",
+      "breakpoints": true
     }
   ]
 }

@@ -13,11 +13,17 @@ import { createAdminRouter } from './routes/admin';
 import { createHealthRouter } from './routes/health';
 import { createSendRouter } from './routes/send';
 import { createWebhookRouter } from './routes/webhook';
+import { createOnboardRouter } from './routes/onboard';
 import { createV1Router } from './routes/v1';
 import { createOpenApiRouter } from './routes/openapi';
 import { createDocsRouter } from './routes/docs';
 import { shutdown as shutdownQueues } from './queue';
 import { startForwardWorker, stopForwardWorker } from './queue/workers/forwardWorker';
+import {
+  registerRefreshTokensRepeat,
+  startRefreshTokensWorker,
+  stopRefreshTokensWorker,
+} from './queue/workers/refreshTokensWorker';
 
 const CRITICAL_ENV = [
   'ADMIN_SECRET',
@@ -134,8 +140,13 @@ export async function buildApp() {
   app.use('/docs', createDocsRouter());
   app.use('/health', createHealthRouter(() => getDb()));
   app.use('/admin', createAdminRouter(() => getDb(), encryptionKey, adminAuth));
+  app.use('/onboard', createOnboardRouter(() => getDb(), encryptionKey, adminAuth, logger));
 
   startForwardWorker(() => getDb(), logger);
+  startRefreshTokensWorker(() => getDb(), encryptionKey, logger);
+  void registerRefreshTokensRepeat(logger).catch((err) => {
+    logger.warn({ err }, 'registerRefreshTokensRepeat failed');
+  });
 
   const adminUiDir = path.join(__dirname, 'admin-ui');
   if (fs.existsSync(adminUiDir)) {
@@ -154,7 +165,8 @@ export async function buildApp() {
         p.startsWith('/openapi.json') ||
         p.startsWith('/docs') ||
         p.startsWith('/health') ||
-        p.startsWith('/admin')
+        p.startsWith('/admin') ||
+        p.startsWith('/onboard')
       ) {
         next();
         return;
@@ -193,6 +205,7 @@ export async function buildApp() {
 async function gracefulShutdown(server: http.Server, logger: Logger, signal: string): Promise<void> {
   logger.info({ signal }, 'graceful shutdown');
   await stopForwardWorker(logger);
+  await stopRefreshTokensWorker(logger);
   await shutdownQueues();
   await new Promise<void>((resolve, reject) => {
     server.close((err) => (err ? reject(err) : resolve()));

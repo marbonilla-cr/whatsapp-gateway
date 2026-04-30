@@ -56,8 +56,44 @@ export type MessageLog = {
 
 export type CreateAppResponse = GatewayApp & { apiKey: string };
 
+export type OnboardStartResponse = {
+  signup_url: string;
+  state: string;
+  session_id: string;
+  expires_at: string;
+};
+
+export type OnboardStatusResponse = {
+  id: string;
+  tenant_id: string;
+  status: string;
+  metadata: unknown;
+  error_message: string | null;
+  expires_at: string;
+  completed_at: string | null;
+};
+
+function metaRedirectUriForOnboarding(): string {
+  const v = import.meta.env.VITE_META_REDIRECT_URI as string | undefined;
+  if (v && v.trim()) return v.trim();
+  const base = BASE.replace(/\/$/, '');
+  return `${base}/onboard/callback`;
+}
+
 export const api = {
   listApps: () => fetch(`${BASE}/admin/apps`, { headers: adminHeaders() }).then((r) => handleJson<GatewayApp[]>(r)),
+
+  startOnboarding: (tenantId: string) =>
+    fetch(`${BASE}/onboard/start`, {
+      method: 'POST',
+      headers: adminHeaders(),
+      body: JSON.stringify({ tenant_id: tenantId, redirect_uri: metaRedirectUriForOnboarding() }),
+    }).then((r) => handleJson<OnboardStartResponse>(r)),
+
+  getOnboardingStatus: (sessionId: string) =>
+    fetch(`${BASE}/onboard/status/${sessionId}`, { headers: adminHeaders() }).then((r) =>
+      handleJson<OnboardStatusResponse>(r)
+    ),
 
   createApp: (data: object) =>
     fetch(`${BASE}/admin/apps`, {
