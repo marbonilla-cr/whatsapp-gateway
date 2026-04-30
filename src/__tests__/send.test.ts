@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { buildApp } from '../server';
-import { getDb, resetDbSingleton } from '../db';
-import { apps } from '../db/schema';
-import { encryptToken, hashApiKey, apiKeyPrefixFromFullKey } from '../services/crypto';
+import { getDb } from '../db';
+import { setupTestPgMem, teardownTestPgMem } from './test-db';
+import { createTestApp } from './fixtures';
 
 const KEY_64_HEX = 'c'.repeat(64);
 
 describe('POST /send auth', () => {
-  beforeEach(() => {
-    resetDbSingleton();
+  beforeEach(async () => {
+    await teardownTestPgMem();
+    await setupTestPgMem();
     process.env.ADMIN_SECRET = 'admin-secret-test-value-here';
     process.env.GATEWAY_ENCRYPTION_KEY = KEY_64_HEX;
     process.env.META_VERIFY_TOKEN = 'verify-token-test';
-    process.env.DATABASE_URL = ':memory:';
+    process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test_mem';
     process.env.LOG_LEVEL = 'silent';
     process.env.NODE_ENV = 'test';
     vi.stubGlobal(
@@ -28,13 +29,13 @@ describe('POST /send auth', () => {
     );
   });
 
-  afterEach(() => {
-    resetDbSingleton();
+  afterEach(async () => {
+    await teardownTestPgMem();
     vi.unstubAllGlobals();
   });
 
   it('returns 401 when X-Gateway-Key is missing or invalid', async () => {
-    const { app } = buildApp();
+    const { app } = await buildApp();
     const res = await request(app)
       .post('/send')
       .set('Content-Type', 'application/json')
@@ -49,26 +50,9 @@ describe('POST /send auth', () => {
   });
 
   it('returns 200 with messageId when key is valid (Meta mocked)', async () => {
-    const { app } = buildApp();
+    const { app } = await buildApp();
     const apiKey = 'gw_testvalidkeyxxxxxxxxxxxxxxxx';
-    const now = new Date().toISOString();
-    const db = getDb(':memory:');
-    db.insert(apps)
-      .values({
-        id: 'appidfortest',
-        name: 'Test',
-        apiKeyHash: hashApiKey(apiKey),
-        apiKeyPrefix: apiKeyPrefixFromFullKey(apiKey),
-        callbackUrl: 'https://example.com/cb',
-        phoneNumberId: '123456789',
-        wabaId: 'waba1',
-        metaAccessToken: encryptToken('token-plain', KEY_64_HEX),
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-
+    await createTestApp(getDb(), { apiKey, encryptionKey: KEY_64_HEX, metaPhoneNumberId: '123456789' });
     const res = await request(app)
       .post('/send')
       .set('Content-Type', 'application/json')
