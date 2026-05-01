@@ -20,7 +20,7 @@ export function createAdminV2Router(getDb: () => AppDb, encryptionKey: string) {
 
   const tenantScoped = Router({ mergeParams: true });
   tenantScoped.use('/users', createUsersAdminRouter(getDb));
-  tenantScoped.use('/wabas', createWabasAdminRouter(getDb));
+  tenantScoped.use('/wabas', createWabasAdminRouter(getDb, encryptionKey));
   tenantScoped.use('/apps', createAppsV2Router(getDb, encryptionKey));
   tenantScoped.use('/templates', createTemplatesAdminRouter(getDb, encryptionKey));
   tenantScoped.use('/messages', createMessagesAdminRouter(getDb));
