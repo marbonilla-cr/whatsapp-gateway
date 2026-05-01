@@ -2,6 +2,7 @@ export { MetaApiClient, META_API_VERSION, getMetaApiClient } from './client';
 export {
   MetaApiError,
   type MetaError,
+  type MetaMediaUploadResponse,
   type MetaResponse,
   type MessagingLimit,
   type PhoneNumber,
