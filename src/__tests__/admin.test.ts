@@ -2,29 +2,31 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { eq } from 'drizzle-orm';
 import { buildApp } from '../server';
-import { getDb, resetDbSingleton } from '../db';
+import { getDb } from '../db';
 import { apps } from '../db/schema';
+import { setupTestPgMem, teardownTestPgMem } from './test-db';
 
 const KEY_64_HEX = 'd'.repeat(64);
 const ADMIN = 'super-admin-secret-for-tests-only';
 
 describe('admin apps CRUD', () => {
-  beforeEach(() => {
-    resetDbSingleton();
+  beforeEach(async () => {
+    await teardownTestPgMem();
+    await setupTestPgMem();
     process.env.ADMIN_SECRET = ADMIN;
     process.env.GATEWAY_ENCRYPTION_KEY = KEY_64_HEX;
     process.env.META_VERIFY_TOKEN = 'verify-token-test';
-    process.env.DATABASE_URL = ':memory:';
+    process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test_mem';
     process.env.LOG_LEVEL = 'silent';
     process.env.NODE_ENV = 'test';
   });
 
-  afterEach(() => {
-    resetDbSingleton();
+  afterEach(async () => {
+    await teardownTestPgMem();
   });
 
   it('POST /admin/apps creates app and GET lists without secrets', async () => {
-    const { app } = buildApp();
+    const { app } = await buildApp();
     const create = await request(app)
       .post('/admin/apps')
       .set('X-Admin-Secret', ADMIN)
@@ -51,7 +53,7 @@ describe('admin apps CRUD', () => {
   }, 30_000);
 
   it('PATCH, rotate-key, DELETE (soft) work', async () => {
-    const { app } = buildApp();
+    const { app } = await buildApp();
     const create = await request(app)
       .post('/admin/apps')
       .set('X-Admin-Secret', ADMIN)
@@ -82,31 +84,32 @@ describe('admin apps CRUD', () => {
     const del = await request(app).delete(`/admin/apps/${id}`).set('X-Admin-Secret', ADMIN);
     expect(del.status).toBe(204);
 
-    const db = getDb(':memory:');
-    const row = db.select().from(apps).where(eq(apps.id, id)).limit(1).all()[0];
+    const db = getDb();
+    const row = (await db.select().from(apps).where(eq(apps.id, id)).limit(1))[0];
     expect(row.isActive).toBe(false);
   }, 30_000);
 });
 
 describe('GET /admin/logs', () => {
-  beforeEach(() => {
-    resetDbSingleton();
+  beforeEach(async () => {
+    await teardownTestPgMem();
+    await setupTestPgMem();
     process.env.ADMIN_SECRET = ADMIN;
     process.env.GATEWAY_ENCRYPTION_KEY = KEY_64_HEX;
     process.env.META_VERIFY_TOKEN = 'verify-token-test';
-    process.env.DATABASE_URL = ':memory:';
+    process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test_mem';
     process.env.LOG_LEVEL = 'silent';
     process.env.NODE_ENV = 'test';
   });
 
-  afterEach(() => {
-    resetDbSingleton();
+  afterEach(async () => {
+    await teardownTestPgMem();
   });
 
   it('requires X-Admin-Secret and returns last message_logs', async () => {
-    const { app } = buildApp();
+    const { app } = await buildApp();
     const forbidden = await request(app).get('/admin/logs');
-    expect(forbidden.status).toBe(403);
+    expect(forbidden.status).toBe(401);
 
     const ok = await request(app).get('/admin/logs').set('X-Admin-Secret', ADMIN);
     expect(ok.status).toBe(200);

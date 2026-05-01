@@ -1,7 +1,32 @@
 import type { InferSelectModel } from 'drizzle-orm';
-import type { apps } from '../db/schema';
+import type { apps, phoneNumbers, tenants, wabas } from '../db/schema';
 
+/** App row with Meta routing fields (joined in gateway auth). */
+export type GatewayAppContext = InferSelectModel<typeof apps> & {
+  wabaId: string;
+  metaPhoneNumberId: string;
+  accessTokenEncrypted: string;
+};
+
+/** Minimal app shape for webhook callback forwarding. */
 export type AppRow = InferSelectModel<typeof apps>;
+
+export type V1ApiKeyContext = {
+  app: InferSelectModel<typeof apps>;
+  tenant: InferSelectModel<typeof tenants>;
+  waba: InferSelectModel<typeof wabas>;
+  phoneNumber: InferSelectModel<typeof phoneNumbers>;
+  tenantId: string;
+  wabaId: string;
+  phoneNumberId: string;
+};
+
+export type V1LegacyApiKeyParts = {
+  prefix: string;
+  secret: string;
+  reconstructedLegacyKey: string;
+  fullBearerToken: string;
+};
 
 export type ErrorCode =
   | 'INVALID_API_KEY'
@@ -20,29 +45,3 @@ export interface ApiErrorBody {
   };
 }
 
-export type MetaMessageType = 'text' | 'template' | 'image' | 'document';
-
-export interface MetaMessagePayload {
-  messaging_product: 'whatsapp';
-  to: string;
-  type: MetaMessageType;
-  text?: { body: string; preview_url?: boolean };
-  template?: {
-    name: string;
-    language: { code: string };
-    components?: unknown[];
-  };
-  image?: { link?: string; id?: string };
-  document?: { link?: string; id?: string; filename?: string };
-}
-
-export class MetaApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly metaBody: unknown
-  ) {
-    super(message);
-    this.name = 'MetaApiError';
-  }
-}

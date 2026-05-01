@@ -1,12 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import type * as schema from '../db/schema';
-import { messageLogs } from '../db/schema';
-import { decryptToken, randomId16 } from '../services/crypto';
-import { sendMessage } from '../services/meta';
-import type { MetaMessagePayload } from '../types';
-import { MetaApiError } from '../types';
+import type { AppDb } from '../db';
+import { messages } from '../db/schema';
+import { randomId16 } from '../services/crypto';
+import { getMetaApiClient, MetaApiError, type SendPayload } from '../services/meta';
 import { createGatewayAuthMiddleware } from '../middleware/auth';
 
 const sendBody = z.discriminatedUnion('type', [
@@ -42,7 +39,7 @@ const sendBody = z.discriminatedUnion('type', [
   }),
 ]);
 
-function buildMetaPayload(parsed: z.infer<typeof sendBody>): MetaMessagePayload {
+function buildMetaPayload(parsed: z.infer<typeof sendBody>): SendPayload {
   const base = { messaging_product: 'whatsapp' as const, to: parsed.to };
   switch (parsed.type) {
     case 'text':
@@ -77,7 +74,7 @@ function bodyPreviewFromSend(parsed: z.infer<typeof sendBody>): string | undefin
 }
 
 export function createSendRouter(
-  getDb: () => BetterSQLite3Database<typeof schema>,
+  getDb: () => AppDb,
   encryptionKey: string,
   gatewayAuth: (req: Request, res: Response, next: NextFunction) => void
 ) {
@@ -104,22 +101,19 @@ export function createSendRouter(
       });
       return;
     }
-    let accessToken: string;
-    try {
-      accessToken = decryptToken(app.metaAccessToken, encryptionKey);
-    } catch {
-      res.status(500).json({
-        error: {
-          code: 'INTERNAL_ERROR' as const,
-          message: 'Failed to decrypt credentials',
-        },
-      });
-      return;
-    }
     const metaPayload = buildMetaPayload(parsed.data);
     let messageId: string;
+    const db = getDb();
     try {
-      const out = await sendMessage(app.phoneNumberId, accessToken, metaPayload);
+      const client = await getMetaApiClient({
+        db,
+        wabaId: app.wabaId,
+        encryptionKey,
+      });
+      const out = await client.sendMessage(app.metaPhoneNumberId, metaPayload);
+      if (!out.messageId) {
+        throw new MetaApiError('Meta response missing message id', 502, out);
+      }
       messageId = out.messageId;
     } catch (e) {
       if (e instanceof MetaApiError) {
@@ -139,25 +133,25 @@ export function createSendRouter(
       });
       return;
     }
-    const db = getDb();
-    const now = new Date().toISOString();
     try {
-      db.insert(messageLogs)
-        .values({
-          id: randomId16(),
-          appId: app.id,
-          direction: 'OUT',
-          fromNumber: app.phoneNumberId,
-          toNumber: parsed.data.to,
-          messageType: parsed.data.type,
-          bodyPreview: bodyPreviewFromSend(parsed.data),
-          metaMessageId: messageId,
-          status: 'sent',
-          createdAt: now,
-        })
-        .run();
+      await db.insert(messages).values({
+        id: randomId16(),
+        appId: app.id,
+        tenantId: app.tenantId,
+        direction: 'OUT',
+        fromNumber: app.metaPhoneNumberId,
+        toNumber: parsed.data.to,
+        messageType: parsed.data.type,
+        bodyPreview: bodyPreviewFromSend(parsed.data),
+        rawPayload: null,
+        metaMessageId: messageId,
+        status: 'sent',
+        errorCode: null,
+        errorMessage: null,
+        createdAt: new Date(),
+      });
     } catch {
-      // still return success to client — log is best-effort
+      // best-effort log
     }
     res.status(200).json({ success: true, messageId });
   });

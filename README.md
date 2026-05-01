@@ -1,131 +1,123 @@
-# WhatsApp Gateway
+# WhatsApp Gateway — MBCSOFT BSP Platform
 
-Microservicio Node.js/TypeScript que centraliza la integración con [Meta WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api): verificación de webhook, reenvío de mensajes entrantes a tus apps y envío saliente con credenciales por aplicación.
+Multi-tenant WhatsApp Business Solution Provider gateway. Tech Provider for Meta WhatsApp Cloud API.
 
-## Quick start
+## Arquitectura
+
+```
+                    ┌─────────────────┐
+  Meta Cloud API ◄──┤  WhatsApp       ├──► Vertical apps (callbacks)
+                    │  Gateway        │
+                    │  (Express)      │
+                    └────────┬────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         ▼                   ▼                   ▼
+   PostgreSQL            Redis (BullMQ)     Admin UI (React/Vite)
+   (Drizzle ORM)     webhook forward +     JWT + roles
+                     token refresh jobs
+```
+
+## Stack
+
+- Node 20+ / TypeScript (strict) / Express
+- Postgres (Drizzle ORM) + Redis (BullMQ)
+- React + Vite + Wouter (admin panel)
+- Meta Graph API v22.0
+- OpenAPI + Scalar at `/openapi.json` and `/docs`
+- Deploy: Railway
+
+## Local development
 
 ```bash
-git clone <repo> && cd whatsapp-gateway
 npm install
 cp .env.example .env
-# Completá .env (ver tabla más abajo). GATEWAY_ENCRYPTION_KEY: 64 caracteres hex (32 bytes).
-npm run dev
+# Edit .env: DATABASE_URL (Postgres), REDIS_URL, JWT_*, GATEWAY_ENCRYPTION_KEY (64 hex chars),
+# ADMIN_SECRET, META_VERIFY_TOKEN, SUPER_ADMIN_*, META_REDIRECT_URI, etc.
+
+npm run db:push   # or migrations per your workflow
+npm run dev       # gateway API + hot reload
 ```
 
-En otra terminal:
+Admin UI is bundled into the gateway for production (`npm run build` copies `admin/dist` to `dist/admin-ui`). For local UI development against a running gateway:
 
 ```bash
-curl -s http://localhost:3000/health | jq
+cd admin && cp .env.example .env
+# Set VITE_GATEWAY_URL=http://localhost:3000 (optional: same-origin works when using built admin)
+npm install && npm run dev
 ```
 
-Deberías ver `status: "ok"` y `db: "ok"`.
+## Architecture overview
 
-## Panel de administración (`admin/`)
+- **Multi-tenant:** tenants → wabas → phone_numbers → apps (vertical integrations)
+- **API v1** for vertical apps: REST + `Authorization: Bearer wgw_<prefix>_<secret>`
+- **Admin panel v2:** `/admin/v2/*` with JWT (`/auth/login`) and roles (`super_admin`, `tenant_admin`, `tenant_operator`)
+- **Embedded Signup:** `/onboard/*` for tenant WABA connection
+- **Webhook:** `POST /webhook` — routing by `phone_number_id`, async forward to app `callbackUrl` via BullMQ when Redis is configured
 
-Aplicación React aparte (Vite + Tailwind + TanStack Query + Wouter + shadcn-style UI) para gestionar apps, ver logs y diagnóstico.
+## Key endpoints
 
-```bash
-cd admin
-cp .env.example .env
-# Editá VITE_GATEWAY_URL (URL pública del gateway) y dejá VITE_ADMIN_SECRET vacío (el secreto se ingresa en pantalla).
-npm install
-npm run dev
-```
+| Path | Purpose |
+|------|---------|
+| `/health` | Liveness: `db`, optional `redis` |
+| `/webhook` | Meta webhook (GET verify, POST events) |
+| `/v1/*` | REST API for vertical apps |
+| `/admin/v2/*` | Multi-tenant admin API |
+| `/auth/*` | Login / refresh (JWT) |
+| `/onboard/*` | Embedded Signup flow |
+| `/docs` | Scalar interactive API reference |
+| `/openapi.json` | OpenAPI 3 specification |
+| `/send` | Legacy send path (`X-Gateway-Key`) |
 
-Abre `http://localhost:5173`, ingresá el **Admin Secret** (mismo que `ADMIN_SECRET` del gateway). El build de producción queda en `admin/dist/`.
+## Environment variables
 
-El gateway expone **CORS** (origen reflejado + cabeceras `X-Admin-Secret` / `X-Gateway-Key`) para que el panel pueda llamar al API desde el navegador.
+See `.env.example` for the full list and comments. Highlights:
 
-## Registrar una nueva app
+- **Core:** `PORT`, `NODE_ENV`, `LOG_LEVEL`, `DATABASE_URL`, `ADMIN_SECRET`, `GATEWAY_ENCRYPTION_KEY`, `META_VERIFY_TOKEN`
+- **Auth:** `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, optional TTL vars
+- **Queue / webhook:** `REDIS_URL`, `STRICT_WEBHOOK_VERIFY`, `FORWARD_TIMEOUT_MS`
+- **Bootstrap:** `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD_BOOTSTRAP`
+- **Meta:** `META_APP_ID`, `META_APP_SECRET`, `META_EMBEDDED_SIGNUP_CONFIG_ID`, `META_REDIRECT_URI`, optional `ADMIN_PUBLIC_URL`
+- **Email alerts (optional):** `EMAIL_*`, `ALERT_*`
 
-Generá un secreto de admin y llamá a `POST /admin/apps`:
+Admin build-time (Vite): `VITE_GATEWAY_URL` (optional when admin is served from the gateway), `VITE_META_APP_ID`, optional `VITE_META_REDIRECT_URI`.
 
-```bash
-curl -s -X POST http://localhost:3000/admin/apps \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Secret: $ADMIN_SECRET" \
-  -d '{
-    "name": "Poiesis HIS",
-    "callbackUrl": "https://tu-app.com/webhooks/whatsapp",
-    "phoneNumberId": "TU_PHONE_NUMBER_ID_DE_META",
-    "wabaId": "TU_WABA_ID",
-    "metaAccessToken": "EAAxxxx..."
-  }' | jq
-```
+**E2E (Playwright, optional):** `E2E_BASE_URL`, `E2E_SUPER_EMAIL` / `E2E_SUPER_PASSWORD`, `E2E_TENANT_ADMIN_EMAIL` / `E2E_TENANT_ADMIN_PASSWORD`, `E2E_USE_WEBSERVER=1` to auto-start `npm run start`, `E2E_PERF=1` for webhook concurrency smoke.
 
-La respuesta `201` incluye `apiKey` **una sola vez**. Guardalo en el vault de la app cliente.
+## Tenant onboarding
 
-## Configurar el webhook en Meta Business Manager
+1. Super admin creates tenants under `/super/tenants`.
+2. Tenant admin logs in → `/dashboard`.
+3. Tenant admin uses **WhatsApp signup** (`/dashboard/onboard`) — Embedded Signup.
+4. Tenant admin uses **Provisioning** wizard (`/dashboard/provision`) for numbers and apps.
+5. Tenant admin manages **Templates** (`/dashboard/templates`).
+6. Vertical app calls **API v1** with its issued API key.
 
-1. En la app de Meta → WhatsApp → **Configuration** → **Webhook**, editá la URL de callback: `https://tu-dominio.com/webhook` (sin sufijo extra: el gateway expone `GET` y `POST` en `/webhook`).
-2. **Verify token**: el mismo valor que `META_VERIFY_TOKEN` en tu `.env`.
-3. Suscribí el campo **messages** (y los que necesites).
-4. **Firma `X-Hub-Signature-256`**: Meta firma con el **App Secret** de la aplicación. Podés definir la variable opcional `META_APP_SECRET` con ese valor; si no existe, el gateway usa `GATEWAY_ENCRYPTION_KEY` para validar el HMAC (útil en tests; en producción conviene `META_APP_SECRET`).
+## Deployment (Railway)
 
-## Integración desde una app cliente (`/send`)
+1. Create **Postgres** and **Redis** services; wire `DATABASE_URL` and `REDIS_URL` on the gateway service.
+2. Set all secrets from `.env.example` (JWT, encryption key, Meta, bootstrap super admin).
+3. Build command: `npm run build`; start: `npm run start`.
+4. Point Meta webhook to `https://<your-host>/webhook` and align `META_VERIFY_TOKEN` / `META_APP_SECRET`.
+5. For Embedded Signup, configure `META_REDIRECT_URI` and app settings in Meta Developers.
 
-```typescript
-const res = await fetch('https://tu-gateway.railway.app/send', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-Gateway-Key': process.env.WA_GATEWAY_KEY!,
-  },
-  body: JSON.stringify({
-    to: '50688887777',
-    type: 'text',
-    text: { body: '¡Hola! Tu cita está confirmada para mañana.' },
-  }),
-});
-const data = (await res.json()) as { success?: boolean; messageId?: string; error?: unknown };
-```
+## Testing
 
-## Variables de entorno
+- `npm test` — Vitest unit and integration tests
+- `npm run build` — TypeScript + admin bundle
+- `npx tsc --noEmit` — type-check gateway `src/`
+- `npm run test:e2e` — Playwright (needs running gateway + Postgres; see `.env.example` E2E vars)
+- `npm run test:e2e:ui` — Playwright UI mode
 
-| Variable | Obligatoria | Descripción |
-|----------|-------------|-------------|
-| `PORT` | No (default `3000`) | Puerto HTTP. |
-| `NODE_ENV` | No (default `development`) | `development` \| `production`, etc. |
-| `ADMIN_SECRET` | Sí | Secreto para header `X-Admin-Secret` en rutas `/admin/*`. |
-| `GATEWAY_ENCRYPTION_KEY` | Sí | 64 caracteres hex (32 bytes). Cifra `metaAccessToken` en SQLite (AES-256-GCM). |
-| `META_VERIFY_TOKEN` | Sí | Token de verificación del webhook (`GET /webhook`). |
-| `META_APP_SECRET` | No | App Secret de Meta para validar `x-hub-signature-256`. Si falta, se usa `GATEWAY_ENCRYPTION_KEY`. |
-| `DATABASE_URL` | Sí | Ruta del archivo SQLite (ej. `./data/gateway.db`). |
-| `LOG_LEVEL` | Sí | `trace` \| `debug` \| `info` \| `warn` \| `error`. |
+Install browsers once: `npx playwright install chromium`
 
-Generar `GATEWAY_ENCRYPTION_KEY`:
+## Documentation
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+- `/docs` — interactive API reference (Scalar)
+- `docs/EMBEDDED_SIGNUP.md` — BSP Embedded Signup notes
+- `docs/RUNBOOK.md` — operations playbook
+- `docs/MIGRATION_TO_PRODUCTION.md` — production cutover checklist
 
-## Deploy en Railway
+## License
 
-1. Creá un proyecto en [Railway](https://railway.app) y conectá el repo (o subí el código).
-2. El archivo `railway.toml` define `startCommand = "node dist/server.js"`, healthcheck en `/health` y `NODE_ENV=production`.
-3. En el dashboard de Railway, definí las variables de entorno de la tabla anterior (al menos las obligatorias).
-4. Build: Nixpacks ejecutará `npm install` y debe ejecutarse `npm run build` (configurá el build command si tu imagen no lo hace automáticamente; por ejemplo **Build Command**: `npm run build`).
-5. Asegurate de que `DATABASE_URL` apunte a un volumen persistente si querés conservar la base entre despliegues (Railway: montá un volumen y usá su ruta, ej. `/data/gateway.db`).
-
-## Scripts útiles
-
-| Script | Uso |
-|--------|-----|
-| `npm run dev` | Servidor con `tsx watch`. |
-| `npm run build` | Compila a `dist/`. |
-| `npm start` | `node dist/server.js`. |
-| `npm test` | Vitest. |
-| `npm run db:generate` | Genera migraciones Drizzle. |
-| `npm run db:migrate` | Aplica migraciones (CLI). |
-| `npm run db:push` | Push de schema (desarrollo). |
-
-Al arrancar, el gateway crea el directorio de datos si falta y aplica migraciones desde `drizzle/` automáticamente.
-
-## Seguridad
-
-- No se registran en logs el `metaAccessToken` ni el API key completo; solo `apiKeyPrefix`.
-- Los mensajes de error siguen el formato `{ "error": { "code", "message" } }`.
-
-## Licencia
-
-MIT (ajustá según tu organización).
+To be defined by Marcelo / MBCSOFT.

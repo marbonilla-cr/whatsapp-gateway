@@ -1,19 +1,19 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1775160335961,
-      "tag": "0000_initial",
+      "version": "7",
+      "when": 1777507758075,
+      "tag": "0000_nervous_wild_child",
       "breakpoints": true
     },
     {
       "idx": 1,
-      "version": "6",
-      "when": 1775160400000,
-      "tag": "0001_message_logs_raw_payload",
+      "version": "7",
+      "when": 1777524269182,
+      "tag": "0001_giant_nightmare",
       "breakpoints": true
     }
   ]

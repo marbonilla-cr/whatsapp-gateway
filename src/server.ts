@@ -3,15 +3,30 @@ import path from 'node:path';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import pino from 'pino';
+import pino, { type Logger } from 'pino';
 import pinoHttp from 'pino-http';
-import { getDb } from './db';
+import http from 'node:http';
+import { initDb, getDb, resetDbSingleton } from './db';
 import { createAdminAuthMiddleware } from './middleware/adminAuth';
+import { createAuthRouter } from './routes/auth';
+import { createAdminV2Router } from './routes/admin/v2';
+import { bootstrapSuperAdmin } from './services/auth';
 import { createGatewayAuthMiddleware } from './middleware/auth';
 import { createAdminRouter } from './routes/admin';
 import { createHealthRouter } from './routes/health';
 import { createSendRouter } from './routes/send';
 import { createWebhookRouter } from './routes/webhook';
+import { createOnboardRouter } from './routes/onboard';
+import { createV1Router } from './routes/v1';
+import { createOpenApiRouter } from './routes/openapi';
+import { createDocsRouter } from './routes/docs';
+import { shutdown as shutdownQueues } from './queue';
+import { startForwardWorker, stopForwardWorker } from './queue/workers/forwardWorker';
+import {
+  registerRefreshTokensRepeat,
+  startRefreshTokensWorker,
+  stopRefreshTokensWorker,
+} from './queue/workers/refreshTokensWorker';
 
 const CRITICAL_ENV = [
   'ADMIN_SECRET',
@@ -19,6 +34,8 @@ const CRITICAL_ENV = [
   'META_VERIFY_TOKEN',
   'DATABASE_URL',
   'LOG_LEVEL',
+  'JWT_ACCESS_SECRET',
+  'JWT_REFRESH_SECRET',
 ] as const;
 
 function validateEnv(): void {
@@ -38,18 +55,7 @@ function validateEnv(): void {
   }
 }
 
-function ensureDataDirFromDatabaseUrl(databaseUrl: string): void {
-  if (databaseUrl === ':memory:') {
-    return;
-  }
-  const resolved = path.resolve(databaseUrl);
-  const dir = path.dirname(resolved);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-export function buildApp() {
+export async function buildApp() {
   validateEnv();
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   process.env.NODE_ENV = nodeEnv;
@@ -61,8 +67,8 @@ export function buildApp() {
   const logLevel = process.env.LOG_LEVEL!;
   const metaWebhookHmacSecret = process.env.META_APP_SECRET ?? encryptionKey;
 
-  ensureDataDirFromDatabaseUrl(databaseUrl);
-  getDb(databaseUrl);
+  await initDb(databaseUrl);
+  await bootstrapSuperAdmin(getDb());
 
   const logger = pino({
     level: logLevel,
@@ -81,7 +87,13 @@ export function buildApp() {
     cors({
       origin: true,
       credentials: true,
-      allowedHeaders: ['Content-Type', 'X-Admin-Secret', 'X-Gateway-Key', 'x-hub-signature-256'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Admin-Secret',
+        'X-Gateway-Key',
+        'x-hub-signature-256',
+      ],
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     })
   );
@@ -95,7 +107,6 @@ export function buildApp() {
     })
   );
 
-  // Raw body for Meta HMAC: `verify` runs on the raw buffer before JSON parse (spec: capture before parse).
   app.use(
     express.json({
       limit: '1mb',
@@ -104,6 +115,7 @@ export function buildApp() {
       },
     })
   );
+  app.use(express.urlencoded({ extended: true }));
 
   const sendLimiter = rateLimit({
     windowMs: 60_000,
@@ -118,29 +130,31 @@ export function buildApp() {
     max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path.startsWith('/v1'),
   });
 
   app.use('/send', sendLimiter);
   app.use(globalLimiter);
 
-  const adminAuth = createAdminAuthMiddleware(adminSecret);
-  const gatewayAuth = createGatewayAuthMiddleware(() => getDb(databaseUrl));
+  const adminAuth = createAdminAuthMiddleware(adminSecret, logger);
+  const gatewayAuth = createGatewayAuthMiddleware(() => getDb());
 
-  app.use(
-    '/webhook',
-    createWebhookRouter(
-      () => getDb(databaseUrl),
-      metaVerifyToken,
-      metaWebhookHmacSecret,
-      logger
-    )
-  );
-  app.use(
-    '/send',
-    createSendRouter(() => getDb(databaseUrl), encryptionKey, gatewayAuth)
-  );
-  app.use('/health', createHealthRouter(() => getDb(databaseUrl)));
-  app.use('/admin', createAdminRouter(() => getDb(databaseUrl), encryptionKey, adminAuth));
+  app.use('/webhook', createWebhookRouter(() => getDb(), metaVerifyToken, metaWebhookHmacSecret, logger));
+  app.use('/send', createSendRouter(() => getDb(), encryptionKey, gatewayAuth));
+  app.use('/v1', createV1Router(() => getDb(), encryptionKey));
+  app.use('/openapi.json', createOpenApiRouter());
+  app.use('/docs', createDocsRouter());
+  app.use('/health', createHealthRouter(() => getDb()));
+  app.use('/auth', createAuthRouter(() => getDb()));
+  app.use('/admin/v2', createAdminV2Router(() => getDb(), encryptionKey));
+  app.use('/admin', createAdminRouter(() => getDb(), encryptionKey, adminAuth));
+  app.use('/onboard', createOnboardRouter(() => getDb(), encryptionKey, adminAuth, logger));
+
+  startForwardWorker(() => getDb(), logger);
+  startRefreshTokensWorker(() => getDb(), encryptionKey, logger);
+  void registerRefreshTokensRepeat(logger).catch((err) => {
+    logger.warn({ err }, 'registerRefreshTokensRepeat failed');
+  });
 
   const adminUiDir = path.join(__dirname, 'admin-ui');
   if (fs.existsSync(adminUiDir)) {
@@ -155,8 +169,13 @@ export function buildApp() {
       if (
         p.startsWith('/webhook') ||
         p.startsWith('/send') ||
+        p.startsWith('/v1') ||
+        p.startsWith('/openapi.json') ||
+        p.startsWith('/docs') ||
         p.startsWith('/health') ||
-        p.startsWith('/admin')
+        p.startsWith('/admin') ||
+        p.startsWith('/auth') ||
+        p.startsWith('/onboard')
       ) {
         next();
         return;
@@ -192,9 +211,31 @@ export function buildApp() {
   return { app, port, logger };
 }
 
+async function gracefulShutdown(server: http.Server, logger: Logger, signal: string): Promise<void> {
+  logger.info({ signal }, 'graceful shutdown');
+  await stopForwardWorker(logger);
+  await stopRefreshTokensWorker(logger);
+  await shutdownQueues();
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
+  await resetDbSingleton();
+  process.exit(0);
+}
+
 if (require.main === module) {
-  const { app, port, logger } = buildApp();
-  app.listen(port, () => {
-    logger.info({ port }, 'WhatsApp Gateway listening');
+  void buildApp().then(({ app, port, logger }) => {
+    const server = http.createServer(app);
+    server.listen(port, () => {
+      logger.info({ port }, 'WhatsApp Gateway listening');
+    });
+    const onSignal = (sig: string) => {
+      void gracefulShutdown(server, logger, sig).catch((err) => {
+        logger.error({ err }, 'shutdown error');
+        process.exit(1);
+      });
+    };
+    process.on('SIGTERM', () => onSignal('SIGTERM'));
+    process.on('SIGINT', () => onSignal('SIGINT'));
   });
 }

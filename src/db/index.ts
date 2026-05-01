@@ -1,66 +1,143 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import type { Pool } from 'pg';
+import { Pool as PgPool } from 'pg';
+import { drizzle as drizzleNodePg } from 'drizzle-orm/node-postgres';
+import { migrate as migrateNodePg } from 'drizzle-orm/node-postgres/migrator';
+import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
+import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { PgliteDatabase } from 'drizzle-orm/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import * as schema from './schema';
+import { apps, phoneNumbers, tenants, wabas } from './schema';
 
-let sqlite: Database.Database | null = null;
-let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
+export type AppDb = NodePgDatabase<typeof schema> | PgliteDatabase<typeof schema>;
 
-function ensureDataDir(dbPath: string): void {
-  if (dbPath === ':memory:' || dbPath.startsWith('file:memdb')) {
+let pool: Pool | null = null;
+let pgliteClient: PGlite | null = null;
+let dbInstance: AppDb | null = null;
+
+const SYSTEM_TENANT_ID = 'tenant_system_internal';
+const DIAG_WABA_ID = 'waba_system_diagnostic';
+const DIAG_PHONE_ID = 'phone_system_diagnostic';
+const UNKNOWN_APP_ID = 'unknown';
+
+async function ensureDiagnosticUnknownApp(db: AppDb): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(tenants)
+    .values({
+      id: SYSTEM_TENANT_ID,
+      businessName: '__system_internal__',
+      legalName: null,
+      countryCode: 'CR',
+      contactEmail: 'system-internal@gateway.invalid',
+      plan: 'enterprise',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing({ target: tenants.id });
+
+  await db
+    .insert(wabas)
+    .values({
+      id: DIAG_WABA_ID,
+      tenantId: SYSTEM_TENANT_ID,
+      metaWabaId: '__gateway_diagnostic_unknown_waba__',
+      metaBusinessId: null,
+      accessTokenEncrypted: '__not_used__',
+      tokenExpiresAt: null,
+      webhookSubscribedAt: null,
+      status: 'active',
+      errorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing({ target: wabas.id });
+
+  await db
+    .insert(phoneNumbers)
+    .values({
+      id: DIAG_PHONE_ID,
+      wabaId: DIAG_WABA_ID,
+      metaPhoneNumberId: '__gateway_diagnostic_unknown_phone__',
+      displayPhoneNumber: '__diagnostic__',
+      displayName: null,
+      displayNameStatus: 'pending',
+      verifiedName: null,
+      qualityRating: null,
+      messagingLimitTier: null,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing({ target: phoneNumbers.id });
+
+  await db
+    .insert(apps)
+    .values({
+      id: UNKNOWN_APP_ID,
+      tenantId: SYSTEM_TENANT_ID,
+      phoneNumberId: DIAG_PHONE_ID,
+      name: '__diagnostic_unknown_app__',
+      vertical: 'custom',
+      callbackUrl: 'https://example.invalid/gateway-diagnostic-placeholder',
+      apiKeyHash: '3f943f629e65568a816d5803b4c1b318e498341cc96498480b99a93f512725b5',
+      apiKeyPrefix: 'diag',
+      configJson: null,
+      isActive: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing({ target: apps.id });
+}
+
+export async function initDb(databaseUrl: string): Promise<void> {
+  if (dbInstance) {
     return;
   }
-  const dir = path.dirname(path.resolve(dbPath));
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-/** FK target for logs sin app registrada (`app_id = 'unknown'`). Idempotente. */
-function ensureDiagnosticUnknownApp(database: Database.Database): void {
-  database.exec(`
-INSERT OR IGNORE INTO apps (
-  id, name, api_key_hash, api_key_prefix, callback_url,
-  phone_number_id, waba_id, meta_access_token, is_active, created_at, updated_at
-) VALUES (
-  'unknown',
-  '__diagnostic_unknown_app__',
-  '3f943f629e65568a816d5803b4c1b318e498341cc96498480b99a93f512725b5',
-  'diag',
-  'https://example.invalid/gateway-diagnostic-placeholder',
-  '__gateway_diagnostic_unknown_phone__',
-  '__gateway_diagnostic_unknown_waba__',
-  '__not_used__',
-  0,
-  '1970-01-01T00:00:00.000Z',
-  '1970-01-01T00:00:00.000Z'
-);
-`);
-}
-
-export function getDb(databaseUrl: string) {
-  if (dbInstance) {
-    return dbInstance;
-  }
-  const fileForSqlite = databaseUrl === ':memory:' ? ':memory:' : path.resolve(databaseUrl);
-  ensureDataDir(databaseUrl === ':memory:' ? ':memory:' : fileForSqlite);
-  sqlite = new Database(fileForSqlite);
-  sqlite.pragma('journal_mode = WAL');
-  dbInstance = drizzle(sqlite, { schema });
+  pool = new PgPool({ connectionString: databaseUrl });
+  dbInstance = drizzleNodePg(pool, { schema });
   const migrationsFolder = path.join(__dirname, '../../drizzle');
   if (fs.existsSync(migrationsFolder)) {
-    migrate(dbInstance, { migrationsFolder });
+    await migrateNodePg(dbInstance as NodePgDatabase<typeof schema>, { migrationsFolder });
   }
-  ensureDiagnosticUnknownApp(sqlite);
+  await ensureDiagnosticUnknownApp(dbInstance);
+}
+
+/** Vitest: in-memory Postgres via PGlite + Drizzle migrator. */
+export async function initDbWithPglite(client: PGlite): Promise<void> {
+  if (dbInstance) {
+    return;
+  }
+  pgliteClient = client;
+  dbInstance = drizzlePglite(client, { schema });
+  const migrationsFolder = path.join(__dirname, '../../drizzle');
+  if (fs.existsSync(migrationsFolder)) {
+    await migratePglite(dbInstance as PgliteDatabase<typeof schema>, { migrationsFolder });
+  }
+  await ensureDiagnosticUnknownApp(dbInstance);
+}
+
+export function getDb(): AppDb {
+  if (!dbInstance) {
+    throw new Error('Database not initialized; call initDb first');
+  }
   return dbInstance;
 }
 
-export function resetDbSingleton(): void {
-  if (sqlite) {
-    sqlite.close();
-    sqlite = null;
+export async function resetDbSingleton(): Promise<void> {
+  if (pgliteClient) {
+    await pgliteClient.close();
+    pgliteClient = null;
+    dbInstance = null;
+    return;
+  }
+  if (pool) {
+    await pool.end();
+    pool = null;
     dbInstance = null;
   }
 }

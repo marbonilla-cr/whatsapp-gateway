@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import type * as schema from '../db/schema';
-import { apps } from '../db/schema';
+import type { AppDb } from '../db';
+import { tenants } from '../db/schema';
+import { pingRedis } from '../queue';
 
 const startTime = Date.now();
 
@@ -18,22 +18,24 @@ function readVersion(): string {
   }
 }
 
-export function createHealthRouter(getDb: () => BetterSQLite3Database<typeof schema>) {
+export function createHealthRouter(getDb: () => AppDb) {
   const r = Router();
 
-  r.get('/', (_req: Request, res: Response) => {
+  r.get('/', async (_req: Request, res: Response) => {
     let dbStatus: 'ok' | 'error' = 'error';
     try {
-      getDb().select().from(apps).limit(1).all();
+      await getDb().select().from(tenants).limit(1);
       dbStatus = 'ok';
     } catch {
       dbStatus = 'error';
     }
+    const redis = await pingRedis();
     res.json({
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000),
       version: readVersion(),
       db: dbStatus,
+      redis,
     });
   });
 

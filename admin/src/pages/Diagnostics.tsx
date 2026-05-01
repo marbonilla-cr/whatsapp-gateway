@@ -4,6 +4,7 @@ import { Send } from 'lucide-react';
 import { toast } from 'sonner';
 import type { GatewayApp, MessageLog } from '@/lib/api';
 import { api } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,13 +36,21 @@ function healthForApp(logs: MessageLog[], appId: string): 'green' | 'yellow' | '
 }
 
 export function Diagnostics() {
+  const { user } = useAuth();
+  const tenantId = user!.tenantId;
   const qc = useQueryClient();
-  const { data: apps = [], isLoading: loadingApps } = useQuery({ queryKey: ['apps'], queryFn: api.listApps });
-  const { data: logs = [], isLoading: loadingLogs } = useQuery({
-    queryKey: ['logs'],
-    queryFn: api.getLogs,
-    refetchInterval: 30_000,
+  const { data: apps = [], isLoading: loadingApps } = useQuery({
+    queryKey: ['apps', tenantId],
+    queryFn: () => api.listApps(tenantId),
+    enabled: !!tenantId,
   });
+  const { data: logsRes, isLoading: loadingLogs } = useQuery({
+    queryKey: ['messages', tenantId],
+    queryFn: () => api.getMessages(tenantId, 100),
+    refetchInterval: 30_000,
+    enabled: !!tenantId,
+  });
+  const logs = logsRes?.data ?? [];
 
   const [testApp, setTestApp] = useState<GatewayApp | null>(null);
   const [testTo, setTestTo] = useState('');
@@ -57,7 +66,7 @@ export function Diagnostics() {
       }),
     onSuccess: (res) => {
       toast.success(`Enviado · ${res.messageId ?? 'ok'}`);
-      qc.invalidateQueries({ queryKey: ['logs'] });
+      qc.invalidateQueries({ queryKey: ['messages', tenantId] });
       setTestApp(null);
       setTestTo('');
       setTestApiKey('');

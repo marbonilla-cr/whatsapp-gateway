@@ -7,6 +7,14 @@ data/*.db-*
 # Accidental SQLite file when DATABASE_URL was resolved incorrectly (legacy)
 :memory:
 
-# Agent / planning artifacts (no commitear)
-.agent-handoff.md
 **/.DS_Store
+
+.agent-handoff.md
+
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# Project planning artifacts (kept locally for reference)
+WHATSAPP_GATEWAY_PLAN.md
+WHATSAPP_GATEWAY_ANALISIS.md
