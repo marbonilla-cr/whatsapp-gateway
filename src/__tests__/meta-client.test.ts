@@ -286,10 +286,15 @@ describe('MetaApiClient success paths', () => {
       const { url, init } = getRequestParts(fetchMock);
       expect(url.origin).toBe('https://graph.facebook.com');
       expect(url.pathname.startsWith(`/${META_API_VERSION}/`)).toBe(true);
-      expect(init.headers).toMatchObject({
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      });
+      const headers = init.headers as Record<string, string>;
+      if (testCase.name === 'exchangeCodeForToken' || testCase.name === 'refreshLongLivedToken') {
+        expect(headers.Authorization).toBeUndefined();
+      } else {
+        expect(headers).toMatchObject({
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        });
+      }
       testCase.assertRequest(url, init);
       const calls = fetchMock.mock.calls as unknown[][];
       const firstCall = calls[0];
@@ -381,6 +386,25 @@ describe('MetaApiClient error handling', () => {
     });
 
     it(`${methodCase.name}: retries on 5xx`, async () => {
+      if (methodCase.name === 'exchangeCodeForToken' || methodCase.name === 'refreshLongLivedToken') {
+        vi.useFakeTimers();
+        const fetchMock = vi.fn(async () =>
+          jsonResponse(500, {
+            error: {
+              message: 'Temporary upstream failure',
+              code: 2,
+            },
+          })
+        );
+        vi.stubGlobal('fetch', fetchMock);
+        const client = createClient();
+        const assertion = expect(methodCase.run(client)).rejects.toBeInstanceOf(MetaApiError);
+        await vi.runAllTimersAsync();
+        await assertion;
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+        return;
+      }
       vi.useFakeTimers();
       const fetchMock = vi.fn(async () =>
         jsonResponse(500, {
@@ -465,6 +489,7 @@ describe('getMetaApiClient', () => {
       tokenExpiresAt: null,
       webhookSubscribedAt: null,
       status: 'active',
+      errorMessage: null,
       createdAt: now,
       updatedAt: now,
     });
@@ -484,6 +509,9 @@ describe('getMetaApiClient', () => {
     if (!firstCall) {
       throw new Error('Expected fetch to be called');
     }
+    const url = String(firstCall[0]);
+    expect(url).toContain('meta_waba_client');
+    expect(url).not.toContain('waba_meta_client');
     const init = (firstCall[1] ?? {}) as RequestInit;
     expect(init.headers).toMatchObject({
       Authorization: 'Bearer plain-token-from-db',
@@ -523,6 +551,7 @@ describe('getMetaApiClient', () => {
       tokenExpiresAt: null,
       webhookSubscribedAt: null,
       status: 'active',
+      errorMessage: null,
       createdAt: now,
       updatedAt: now,
     });

@@ -79,6 +79,7 @@ async function ensureWabaAndPhone(
       tokenExpiresAt: null,
       webhookSubscribedAt: null,
       status: 'active',
+      errorMessage: null,
       createdAt: now,
       updatedAt: now,
     });
