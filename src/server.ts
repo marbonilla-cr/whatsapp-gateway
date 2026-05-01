@@ -7,6 +7,7 @@ import pino, { type Logger } from 'pino';
 import pinoHttp from 'pino-http';
 import http from 'node:http';
 import { initDb, getDb, resetDbSingleton } from './db';
+import { seedTenants } from './db/seed';
 import { createAdminAuthMiddleware } from './middleware/adminAuth';
 import { createAuthRouter } from './routes/auth';
 import { createAdminV2Router } from './routes/admin/v2';
@@ -68,6 +69,7 @@ export async function buildApp() {
   const metaWebhookHmacSecret = process.env.META_APP_SECRET ?? encryptionKey;
 
   await initDb(databaseUrl);
+  await seedTenants();
   await bootstrapSuperAdmin(getDb());
 
   const logger = pino({
