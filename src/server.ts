@@ -1,15 +1,20 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import pino from 'pino';
+import pino, { type Logger } from 'pino';
 import pinoHttp from 'pino-http';
-import { initDb, getDb } from './db';
+import http from 'node:http';
+import { initDb, getDb, resetDbSingleton } from './db';
 import { createAdminAuthMiddleware } from './middleware/adminAuth';
 import { createGatewayAuthMiddleware } from './middleware/auth';
 import { createAdminRouter } from './routes/admin';
 import { createHealthRouter } from './routes/health';
 import { createSendRouter } from './routes/send';
 import { createWebhookRouter } from './routes/webhook';
+import { shutdown as shutdownQueues } from './queue';
+import { startForwardWorker, stopForwardWorker } from './queue/workers/forwardWorker';
 
 const CRITICAL_ENV = [
   'ADMIN_SECRET',
@@ -116,6 +121,41 @@ export async function buildApp() {
   app.use('/health', createHealthRouter(() => getDb()));
   app.use('/admin', createAdminRouter(() => getDb(), encryptionKey, adminAuth));
 
+  startForwardWorker(() => getDb(), logger);
+
+  const adminUiDir = path.join(__dirname, 'admin-ui');
+  if (fs.existsSync(adminUiDir)) {
+    logger.info({ adminUiDir }, 'admin UI enabled');
+    app.use(express.static(adminUiDir));
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        next();
+        return;
+      }
+      const p = req.path;
+      if (
+        p.startsWith('/webhook') ||
+        p.startsWith('/send') ||
+        p.startsWith('/health') ||
+        p.startsWith('/admin')
+      ) {
+        next();
+        return;
+      }
+      if (path.extname(p) !== '' && p !== '/') {
+        next();
+        return;
+      }
+      res.sendFile(path.join(adminUiDir, 'index.html'), (err) => {
+        if (err) next(err);
+      });
+    });
+  } else {
+    logger.warn(
+      'Admin UI missing (dist/admin-ui not next to server.js). Run full `npm run build` so /login works; until then use the admin app locally with VITE_GATEWAY_URL.'
+    );
+  }
+
   app.use((_req: Request, res: Response) => {
     res.status(404).json({
       error: { code: 'NOT_FOUND' as const, message: 'Not found' },
@@ -133,10 +173,30 @@ export async function buildApp() {
   return { app, port, logger };
 }
 
+async function gracefulShutdown(server: http.Server, logger: Logger, signal: string): Promise<void> {
+  logger.info({ signal }, 'graceful shutdown');
+  await stopForwardWorker(logger);
+  await shutdownQueues();
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
+  await resetDbSingleton();
+  process.exit(0);
+}
+
 if (require.main === module) {
   void buildApp().then(({ app, port, logger }) => {
-    app.listen(port, () => {
+    const server = http.createServer(app);
+    server.listen(port, () => {
       logger.info({ port }, 'WhatsApp Gateway listening');
     });
+    const onSignal = (sig: string) => {
+      void gracefulShutdown(server, logger, sig).catch((err) => {
+        logger.error({ err }, 'shutdown error');
+        process.exit(1);
+      });
+    };
+    process.on('SIGTERM', () => onSignal('SIGTERM'));
+    process.on('SIGINT', () => onSignal('SIGINT'));
   });
 }

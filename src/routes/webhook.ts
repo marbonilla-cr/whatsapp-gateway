@@ -3,11 +3,14 @@ import { and, eq } from 'drizzle-orm';
 import type { AppDb } from '../db';
 import type { Logger } from 'pino';
 import { apps, messages, phoneNumbers, webhookEvents } from '../db/schema';
-import type { AppRow } from '../types';
 import { randomId16, validateMetaSignature } from '../services/crypto';
-import { forwardToApp } from '../services/router';
+import { enqueueForward } from '../queue';
 
 const UNKNOWN_APP_ID = 'unknown';
+
+function isStrictWebhookVerify(): boolean {
+  return process.env.STRICT_WEBHOOK_VERIFY === 'true';
+}
 
 function safeJsonStringify(value: unknown): string {
   try {
@@ -15,24 +18,6 @@ function safeJsonStringify(value: unknown): string {
   } catch {
     return '"[unserializable]"';
   }
-}
-
-function extractPhoneNumberId(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== 'object') return undefined;
-  const entry = (payload as { entry?: unknown[] }).entry;
-  if (!Array.isArray(entry)) return undefined;
-  for (const ent of entry) {
-    if (!ent || typeof ent !== 'object') continue;
-    const changes = (ent as { changes?: unknown[] }).changes;
-    if (!Array.isArray(changes)) continue;
-    for (const ch of changes) {
-      if (!ch || typeof ch !== 'object') continue;
-      const value = (ch as { value?: { metadata?: { phone_number_id?: string } } }).value;
-      const pid = value?.metadata?.phone_number_id;
-      if (typeof pid === 'string' && pid.length > 0) return pid;
-    }
-  }
-  return undefined;
 }
 
 function extractPhoneFromWaValue(value: unknown): string | undefined {
@@ -165,17 +150,39 @@ function parseJsonb(raw: string | null): Record<string, unknown> {
   }
 }
 
-async function loadAppByMetaPhoneNumberId(
+function changeToRecord(change: MetaWebhookChange): Record<string, unknown> {
+  const base: Record<string, unknown> = {};
+  if (change.field !== undefined) base.field = change.field;
+  if (change.value !== undefined) base.value = change.value;
+  if (change.rawPayload !== null) {
+    try {
+      base.raw = JSON.parse(change.rawPayload) as unknown;
+    } catch {
+      base.raw = change.rawPayload;
+    }
+  }
+  return base;
+}
+
+async function resolveAppByMetaPhoneNumberId(
   db: AppDb,
   metaPhoneNumberId: string
-): Promise<AppRow | undefined> {
-  const rows = await db
-    .select({ app: apps })
-    .from(apps)
-    .innerJoin(phoneNumbers, eq(apps.phoneNumberId, phoneNumbers.id))
-    .where(and(eq(phoneNumbers.metaPhoneNumberId, metaPhoneNumberId), eq(apps.isActive, true)))
+): Promise<{ app: typeof apps.$inferSelect; phoneRow: typeof phoneNumbers.$inferSelect } | undefined> {
+  const pnRows = await db
+    .select()
+    .from(phoneNumbers)
+    .where(eq(phoneNumbers.metaPhoneNumberId, metaPhoneNumberId))
     .limit(1);
-  return rows[0]?.app;
+  const phoneRow = pnRows[0];
+  if (!phoneRow) return undefined;
+  const appRows = await db
+    .select()
+    .from(apps)
+    .where(and(eq(apps.phoneNumberId, phoneRow.id), eq(apps.isActive, true)))
+    .limit(1);
+  const app = appRows[0];
+  if (!app) return undefined;
+  return { app, phoneRow };
 }
 
 export function createWebhookRouter(
@@ -217,7 +224,7 @@ export function createWebhookRouter(
           contentLength: req.header('content-length'),
           userAgent: req.header('user-agent'),
         },
-        'POST /webhook: missing signature — logging and returning 200 (diagnostic)'
+        'POST /webhook: missing signature'
       );
     } else if (!raw || !Buffer.isBuffer(raw)) {
       rejectionReasons.push('missing_raw_body');
@@ -228,76 +235,40 @@ export function createWebhookRouter(
           signaturePrefix: signature.slice(0, 24),
           contentType: req.header('content-type'),
         },
-        'POST /webhook: rawBody missing — logging and returning 200 (diagnostic)'
+        'POST /webhook: rawBody missing'
       );
     } else if (!validateMetaSignature(raw, signature, hmacSecret)) {
       rejectionReasons.push('invalid_hmac');
-      const sigOkFormat = signature.startsWith('sha256=');
-      const recvLen = signature.startsWith('sha256=') ? signature.length - 7 : 0;
       log.warn(
         {
           diagnostic: 'webhook_signature',
           reason: 'invalid_hmac',
-          signatureFormatOk: sigOkFormat,
           signaturePrefix: signature.slice(0, 32),
-          receivedHexLength: recvLen,
           rawBodyLength: raw.length,
-          hmacSecretConfiguredLength: hmacSecret.length,
         },
-        'POST /webhook: HMAC validation failed — logging and returning 200 (diagnostic)'
+        'POST /webhook: HMAC validation failed'
       );
     } else {
       signatureValid = true;
     }
 
-    if (rejectionReasons.length > 0) {
-      log.info({ rejectionReasons }, 'webhook verification did not pass; payload still recorded (diagnostic)');
+    const strict = isStrictWebhookVerify();
+    if (strict && !signatureValid) {
+      log.warn({ rejectionReasons }, 'STRICT_WEBHOOK_VERIFY: rejecting webhook');
+      res.status(403).json({
+        error: { code: 'FORBIDDEN' as const, message: 'Invalid webhook signature' },
+      });
+      return;
+    }
+
+    if (rejectionReasons.length > 0 && !strict) {
+      log.info({ rejectionReasons }, 'webhook verification did not pass; accepting (non-strict)');
     }
 
     const payload = req.body as unknown;
     const db = getDb();
-    const phoneNumberId = extractPhoneNumberId(payload);
-
-    let appForForward: AppRow | undefined;
-    if (phoneNumberId) {
-      appForForward = await loadAppByMetaPhoneNumberId(db, phoneNumberId);
-    }
-
-    if (signatureValid && appForForward) {
-      void forwardToApp(appForForward, payload as object, log);
-    } else {
-      if (signatureValid && phoneNumberId && !appForForward) {
-        log.warn(
-          { phoneNumberId, rejectionReasons: ['no_active_app_for_phone_number_id'] },
-          'No active app for phone_number_id — not forwarding (diagnostic)'
-        );
-      } else if (!signatureValid) {
-        log.info(
-          { skipForward: 'invalid_or_unverified_signature', rejectionReasons },
-          'Not forwarding webhook to app (diagnostic)'
-        );
-      }
-    }
-
     const changes = extractMetaChanges(payload);
     const now = new Date();
-
-    try {
-      await db.insert(webhookEvents).values({
-        id: randomId16(),
-        wabaId: null,
-        phoneNumberId: null,
-        eventType: 'META_WEBHOOK_POST',
-        rawPayload: (typeof payload === 'object' && payload !== null
-          ? (payload as Record<string, unknown>)
-          : { body: payload }) as Record<string, unknown>,
-        signatureValid,
-        processed: false,
-        createdAt: now,
-      });
-    } catch (err) {
-      log.error({ err }, 'failed to insert webhook_events');
-    }
 
     const unknownTenantRows = await db
       .select({ tenantId: apps.tenantId })
@@ -307,8 +278,38 @@ export function createWebhookRouter(
     const unknownTenantId = unknownTenantRows[0]?.tenantId;
 
     for (const change of changes) {
-      const pid = extractPhoneFromWaValue(change.value);
-      const appRow = pid ? await loadAppByMetaPhoneNumberId(db, pid) : undefined;
+      const metaPid = extractPhoneFromWaValue(change.value);
+      let wabaId: string | null = null;
+      let phoneNumberFk: string | null = null;
+      let appRow: typeof apps.$inferSelect | undefined;
+
+      if (metaPid) {
+        const resolved = await resolveAppByMetaPhoneNumberId(db, metaPid);
+        if (resolved) {
+          appRow = resolved.app;
+          wabaId = resolved.phoneRow.wabaId;
+          phoneNumberFk = resolved.phoneRow.id;
+        }
+      }
+
+      const eventId = randomId16();
+      const auditPayload = changeToRecord(change);
+
+      try {
+        await db.insert(webhookEvents).values({
+          id: eventId,
+          wabaId,
+          phoneNumberId: phoneNumberFk,
+          eventType: change.field ?? 'META_WEBHOOK_CHANGE',
+          rawPayload: auditPayload,
+          signatureValid,
+          processed: Boolean(appRow && signatureValid),
+          createdAt: now,
+        });
+      } catch (err) {
+        log.error({ err }, 'failed to insert webhook_events');
+      }
+
       const appId = appRow?.id ?? UNKNOWN_APP_ID;
       const tenantId = appRow?.tenantId ?? unknownTenantId;
       const { from: fromNumber, to: toNumber } = inferNumbersFromValue(change.value);
@@ -316,33 +317,52 @@ export function createWebhookRouter(
       const bodyPreview = bodyPreviewForChange(change.field, change.value);
       const metaMessageId = metaMessageIdFromValue(change.value);
       const rawObj = parseJsonb(change.rawPayload);
+
       try {
         if (!tenantId) {
           log.error({ appId }, 'missing tenant for message insert');
-          continue;
+        } else {
+          await db.insert(messages).values({
+            id: randomId16(),
+            appId,
+            tenantId,
+            direction: 'IN',
+            fromNumber,
+            toNumber,
+            messageType,
+            bodyPreview,
+            rawPayload: rawObj,
+            metaMessageId: metaMessageId ?? null,
+            status: 'sent',
+            errorCode: null,
+            errorMessage: null,
+            createdAt: now,
+          });
         }
-        await db.insert(messages).values({
-          id: randomId16(),
-          appId,
-          tenantId,
-          direction: 'IN',
-          fromNumber,
-          toNumber,
-          messageType,
-          bodyPreview,
-          rawPayload: rawObj,
-          metaMessageId: metaMessageId ?? null,
-          status: 'sent',
-          errorCode: null,
-          errorMessage: null,
-          createdAt: now,
-        });
       } catch (err) {
         log.error({ err, appId }, 'failed to insert message');
       }
+
+      if (signatureValid && appRow) {
+        try {
+          await enqueueForward({
+            appId: appRow.id,
+            eventId,
+            change: auditPayload,
+          });
+        } catch (err) {
+          log.error({ err, appId: appRow.id, eventId }, 'enqueue forward failed');
+        }
+      } else if (metaPid && !appRow) {
+        log.warn({ phone_number_id: metaPid }, 'No app for phone_number_id — orphan webhook event');
+      }
     }
 
-    res.status(200).json({ success: true });
+    res.status(200).json({
+      success: true,
+      signatureValid,
+      strictWebhookVerify: strict,
+    });
   });
 
   return r;

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AppDb } from '../db';
 import { tenants } from '../db/schema';
+import { pingRedis } from '../queue';
 
 const startTime = Date.now();
 
@@ -28,11 +29,13 @@ export function createHealthRouter(getDb: () => AppDb) {
     } catch {
       dbStatus = 'error';
     }
+    const redis = await pingRedis();
     res.json({
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000),
       version: readVersion(),
       db: dbStatus,
+      redis,
     });
   });
 

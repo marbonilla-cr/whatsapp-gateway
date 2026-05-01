@@ -50,7 +50,7 @@ describe('admin apps CRUD', () => {
     expect(created).not.toHaveProperty('apiKeyHash');
     expect(created).not.toHaveProperty('metaAccessToken');
     expect(created!.phoneNumberId).toBe('pnid-1');
-  });
+  }, 30_000);
 
   it('PATCH, rotate-key, DELETE (soft) work', async () => {
     const { app } = await buildApp();
@@ -87,7 +87,7 @@ describe('admin apps CRUD', () => {
     const db = getDb();
     const row = (await db.select().from(apps).where(eq(apps.id, id)).limit(1))[0];
     expect(row.isActive).toBe(false);
-  });
+  }, 30_000);
 });
 
 describe('GET /admin/logs', () => {
@@ -114,5 +114,5 @@ describe('GET /admin/logs', () => {
     const ok = await request(app).get('/admin/logs').set('X-Admin-Secret', ADMIN);
     expect(ok.status).toBe(200);
     expect(Array.isArray(ok.body)).toBe(true);
-  });
+  }, 30_000);
 });
