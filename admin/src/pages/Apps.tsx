@@ -4,6 +4,7 @@ import { Plus, Pencil, KeyRound, Trash2, Copy, ExternalLink } from 'lucide-react
 import { toast } from 'sonner';
 import type { GatewayApp } from '@/lib/api';
 import { api } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,8 +36,14 @@ const emptyCreate = {
 };
 
 export function Apps() {
+  const { user } = useAuth();
+  const tenantId = user!.tenantId;
   const qc = useQueryClient();
-  const { data: apps = [], isLoading } = useQuery({ queryKey: ['apps'], queryFn: api.listApps });
+  const { data: apps = [], isLoading } = useQuery({
+    queryKey: ['apps', tenantId],
+    queryFn: () => api.listApps(tenantId),
+    enabled: !!tenantId,
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
@@ -58,9 +65,9 @@ export function Apps() {
   const [deleteStep2, setDeleteStep2] = useState(false);
 
   const createMut = useMutation({
-    mutationFn: () => api.createApp(createForm),
+    mutationFn: () => api.createApp(tenantId, createForm),
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['apps'] });
+      qc.invalidateQueries({ queryKey: ['apps', tenantId] });
       setCreateOpen(false);
       setCreateForm(emptyCreate);
       setNewKeyModal(res.apiKey);
@@ -70,10 +77,10 @@ export function Apps() {
   });
 
   const patchMut = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: object }) => api.updateApp(id, body),
+    mutationFn: ({ id, body }: { id: string; body: object }) => api.updateApp(tenantId, id, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['apps'] });
-      qc.invalidateQueries({ queryKey: ['logs'] });
+      qc.invalidateQueries({ queryKey: ['apps', tenantId] });
+      qc.invalidateQueries({ queryKey: ['messages', tenantId] });
       setEditApp(null);
       toast.success('Guardado');
     },
@@ -81,9 +88,9 @@ export function Apps() {
   });
 
   const rotateMut = useMutation({
-    mutationFn: (id: string) => api.rotateKey(id),
+    mutationFn: (id: string) => api.rotateKey(tenantId, id),
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['apps'] });
+      qc.invalidateQueries({ queryKey: ['apps', tenantId] });
       setRotateTarget(null);
       setRotatedKey(res.apiKey);
       toast.success('Nueva clave generada');
@@ -92,9 +99,9 @@ export function Apps() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) => api.deleteApp(id),
+    mutationFn: (id: string) => api.deleteApp(tenantId, id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['apps'] });
+      qc.invalidateQueries({ queryKey: ['apps', tenantId] });
       setDeleteTarget(null);
       setDeleteStep2(false);
       toast.success('App desactivada');

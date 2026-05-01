@@ -7,6 +7,4 @@ data/*.db-*
 # Accidental SQLite file when DATABASE_URL was resolved incorrectly (legacy)
 :memory:
 
-# Agent / planning artifacts (no commitear)
-.agent-handoff.md
 **/.DS_Store
